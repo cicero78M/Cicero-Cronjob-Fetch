@@ -1,0 +1,4 @@
+{
+  "watch": ["app.js", "src"],
+  "ignore": ["laphar", "logs", "*.txt", "*.csv"]
+}

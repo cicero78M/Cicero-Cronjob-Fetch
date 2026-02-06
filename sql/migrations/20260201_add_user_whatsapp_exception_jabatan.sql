@@ -1,0 +1,9 @@
+-- Add missing columns to user table
+ALTER TABLE "user"
+ADD COLUMN IF NOT EXISTS jabatan VARCHAR;
+
+ALTER TABLE "user"
+ADD COLUMN IF NOT EXISTS whatsapp VARCHAR;
+
+ALTER TABLE "user"
+ADD COLUMN IF NOT EXISTS exception BOOLEAN DEFAULT FALSE;

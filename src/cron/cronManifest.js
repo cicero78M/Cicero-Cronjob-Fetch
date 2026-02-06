@@ -1,0 +1,80 @@
+export default [
+  {
+    jobKey: './src/cron/cronDbBackup.js',
+    modulePath: './src/cron/cronDbBackup.js',
+    bucket: 'always',
+    description: 'Backup database dump to Google Drive using service account credentials.',
+  },
+  {
+    jobKey: './src/cron/cronRekapLink.js',
+    modulePath: './src/cron/cronRekapLink.js',
+    bucket: 'waClient',
+    description: 'Distribute amplification link recaps to all active amplification clients.',
+  },
+  {
+    jobKey: './src/cron/cronAmplifyLinkMonthly.js',
+    modulePath: './src/cron/cronAmplifyLinkMonthly.js',
+    bucket: 'waClient',
+    description: 'Generate and deliver monthly amplification spreadsheets on the last day of the month.',
+  },
+  {
+    jobKey: './src/cron/cronDirRequestRekapUpdate.js',
+    modulePath: './src/cron/cronDirRequestRekapUpdate.js',
+    bucket: 'waClient',
+    description: 'Send Ditbinmas executive summaries and rekap updates to admins and broadcast groups.',
+  },
+  {
+    jobKey: './src/cron/cronDirRequestRekapBelumLengkapDitsamapta.js',
+    modulePath: './src/cron/cronDirRequestRekapBelumLengkapDitsamapta.js',
+    bucket: 'waClient',
+    description: 'Send Ditsamapta incomplete Instagram/TikTok data recaps to admin recipients only.',
+  },
+  {
+    jobKey: './src/cron/cronDirRequestFetchSosmed.js',
+    modulePath: './src/cron/cronDirRequestFetchSosmed.js',
+    bucket: 'always',
+    description: 'Fetch Ditbinmas Instagram/TikTok posts, refresh engagement metrics, and broadcast status deltas.',
+  },
+  {
+    jobKey: './src/cron/cronDashboardSubscriptionExpiry.js',
+    modulePath: './src/cron/cronDashboardSubscriptionExpiry.js',
+    bucket: 'waClient',
+    description: 'Expire overdue dashboard subscriptions and notify users via WhatsApp.',
+  },
+  {
+    jobKey: './src/cron/cronPremiumExpiry.js',
+    modulePath: './src/cron/cronPremiumExpiry.js',
+    bucket: 'always',
+    description: 'Expire premium access for mobile users when premium_end_date has passed.',
+  },
+  {
+    jobKey: './src/cron/cronDashboardPremiumRequestExpiry.js',
+    modulePath: './src/cron/cronDashboardPremiumRequestExpiry.js',
+    bucket: 'waClient',
+    description: 'Expire stale dashboard premium requests and notify admins plus requesters.',
+  },
+  {
+    jobKey: './src/cron/cronOprRequestAbsensiUpdateDataUsername.js',
+    modulePath: './src/cron/cronOprRequestAbsensiUpdateDataUsername.js',
+    bucket: 'waClient',
+    description: 'Send hourly oprrequest absensi update data username recaps to each org client WhatsApp group.',
+  },
+  {
+    jobKey: './src/cron/cronOprRequestAbsensiEngagement.js',
+    modulePath: './src/cron/cronOprRequestAbsensiEngagement.js',
+    bucket: 'waClient',
+    description: 'Send oprrequest engagement absensi Instagram/TikTok recaps to org client WhatsApp group, operator, and super admin.',
+  },
+  {
+    jobKey: './src/cron/cronOprRequestAmplifyRoutineUpdate.js',
+    modulePath: './src/cron/cronOprRequestAmplifyRoutineUpdate.js',
+    bucket: 'always',
+    description: 'Refresh oprrequest tugas rutin amplification content for active org clients with amplification enabled during business hours.',
+  },
+  {
+    jobKey: './src/cron/cronOprRequestDailyReport.js',
+    modulePath: './src/cron/cronOprRequestDailyReport.js',
+    bucket: 'waClient',
+    description: 'Send oprrequest daily amplification reports (tugas rutin no 1 and no 2) to operator WhatsApp for active org clients with amplification enabled.',
+  },
+];
