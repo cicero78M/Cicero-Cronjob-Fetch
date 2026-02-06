@@ -8,6 +8,9 @@ import { fetchAndStoreInstaContent } from "../handler/fetchpost/instaFetchPost.j
 import { handleFetchLikesInstagram } from "../handler/fetchengagement/fetchLikesInstagram.js";
 import { fetchAndStoreTiktokContent } from "../handler/fetchpost/tiktokFetchPost.js";
 import { handleFetchKomentarTiktokBatch } from "../handler/fetchengagement/fetchCommentTiktok.js";
+import { detectChanges, hasNotableChanges } from "../service/tugasChangeDetector.js";
+import { sendTugasNotification, buildChangeSummary } from "../service/tugasNotificationService.js";
+import { waClient, waGatewayClient, waUserClient } from "../service/waService.js";
 
 const LOG_TAG = "CRON DIRFETCH SOSMED";
 
@@ -136,6 +139,13 @@ export async function runCron(options = {}) {
 
         const countsAfter = { ig: igCount, tiktok: tiktokCount };
 
+        // Detect changes for WhatsApp notification
+        const changes = await detectChanges(
+          { igCount: countsBefore.ig, tiktokCount: countsBefore.tiktok },
+          { igCount: countsAfter.ig, tiktokCount: countsAfter.tiktok },
+          clientId
+        );
+
         // Update state
         const nextState = {
           igCount,
@@ -145,6 +155,40 @@ export async function runCron(options = {}) {
 
         logMessage("fetchComplete", clientId, "fetchComplete", "completed", countsBefore, countsAfter,
           "Social media fetch completed successfully");
+
+        // Send WhatsApp notification if there are notable changes
+        if (hasNotableChanges(changes)) {
+          const changeSummary = buildChangeSummary(changes);
+          logMessage("waNotification", clientId, "sendNotification", "start", countsBefore, countsAfter,
+            `Sending WA notification: ${changeSummary}`);
+
+          try {
+            // Try to use waGatewayClient first, fallback to waClient or waUserClient
+            const activeWaClient = waGatewayClient || waClient || waUserClient;
+            
+            if (activeWaClient) {
+              const notificationSent = await sendTugasNotification(activeWaClient, clientId, changes);
+              
+              if (notificationSent) {
+                logMessage("waNotification", clientId, "sendNotification", "completed", countsBefore, countsAfter,
+                  `WA notification sent: ${changeSummary}`);
+              } else {
+                logMessage("waNotification", clientId, "sendNotification", "skipped", countsBefore, countsAfter,
+                  "No group configured or no message sent");
+              }
+            } else {
+              logMessage("waNotification", clientId, "sendNotification", "skipped", countsBefore, countsAfter,
+                "WhatsApp client not available");
+            }
+          } catch (waErr) {
+            logMessage("waNotification", clientId, "sendNotification", "error", countsBefore, countsAfter,
+              waErr?.message || String(waErr),
+              { name: waErr?.name, stack: waErr?.stack?.slice(0, 200) });
+          }
+        } else {
+          logMessage("waNotification", clientId, "sendNotification", "skipped", countsBefore, countsAfter,
+            "No notable changes detected");
+        }
 
       } catch (clientErr) {
         const clientId = String(client?.client_id || "").trim().toUpperCase();
