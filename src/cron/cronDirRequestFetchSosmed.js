@@ -11,7 +11,7 @@ import { handleFetchKomentarTiktokBatch } from "../handler/fetchengagement/fetch
 import { detectChanges, hasNotableChanges } from "../service/tugasChangeDetector.js";
 import { sendTugasNotification, buildChangeSummary } from "../service/tugasNotificationService.js";
 import { waGatewayClient } from "../service/waService.js";
-import { sendTelegramLog } from "../service/telegramService.js";
+import { sendTelegramLog, sendTelegramError } from "../service/telegramService.js";
 
 const LOG_TAG = "CRON DIRFETCH SOSMED";
 
@@ -69,12 +69,14 @@ export async function runCron(options = {}) {
 
   try {
     logMessage("start", null, "cron", "start", null, null, "", { forceEngagementOnly });
+    await sendTelegramLog("INFO", `🚀 Cron job started: ${LOG_TAG}${forceEngagementOnly ? " (engagement only mode)" : ""}`);
 
     const skipPostFetch = Boolean(forceEngagementOnly);
     const activeClients = await findAllActiveClientsWithSosmed();
 
     if (activeClients.length === 0) {
       logMessage("init", null, "loadClients", "empty", null, null, "No active clients with Instagram or TikTok");
+      await sendTelegramLog("INFO", `${LOG_TAG}: No active clients to process`);
       return;
     }
 
@@ -197,14 +199,17 @@ export async function runCron(options = {}) {
         logMessage("client", clientId, "processClient", "error", null, null, 
           clientErr?.message || String(clientErr),
           { name: clientErr?.name, stack: clientErr?.stack?.slice(0, 200) });
+        await sendTelegramError(`${LOG_TAG} - Client ${clientId}`, clientErr);
       }
     }
 
     logMessage("end", null, "cron", "completed", null, null, "All clients processed successfully");
+    await sendTelegramLog("INFO", `✅ ${LOG_TAG} completed successfully. Processed ${activeClients.length} clients.`);
 
   } catch (err) {
     logMessage("cron", null, "run", "error", null, null, err?.message || String(err),
       { name: err?.name, stack: err?.stack?.slice(0, 200) });
+    await sendTelegramError(LOG_TAG, err);
   } finally {
     isFetchInFlight = false;
   }
