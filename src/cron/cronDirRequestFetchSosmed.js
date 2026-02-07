@@ -10,7 +10,8 @@ import { fetchAndStoreTiktokContent } from "../handler/fetchpost/tiktokFetchPost
 import { handleFetchKomentarTiktokBatch } from "../handler/fetchengagement/fetchCommentTiktok.js";
 import { detectChanges, hasNotableChanges } from "../service/tugasChangeDetector.js";
 import { sendTugasNotification, buildChangeSummary } from "../service/tugasNotificationService.js";
-import { waClient, waGatewayClient, waUserClient } from "../service/waService.js";
+import { waGatewayClient } from "../service/waService.js";
+import { sendTelegramLog } from "../service/telegramService.js";
 
 const LOG_TAG = "CRON DIRFETCH SOSMED";
 
@@ -163,15 +164,16 @@ export async function runCron(options = {}) {
             `Sending WA notification: ${changeSummary}`);
 
           try {
-            // Try to use waGatewayClient first, fallback to waClient or waUserClient
-            const activeWaClient = waGatewayClient || waClient || waUserClient;
-            
-            if (activeWaClient) {
-              const notificationSent = await sendTugasNotification(activeWaClient, clientId, changes);
+            // Use only waGatewayClient for task notifications
+            if (waGatewayClient) {
+              const notificationSent = await sendTugasNotification(waGatewayClient, clientId, changes);
               
               if (notificationSent) {
                 logMessage("waNotification", clientId, "sendNotification", "completed", countsBefore, countsAfter,
                   `WA notification sent: ${changeSummary}`);
+                
+                // Send success log to Telegram
+                await sendTelegramLog("INFO", `Task notification sent for client ${clientId}: ${changeSummary}`);
               } else {
                 logMessage("waNotification", clientId, "sendNotification", "skipped", countsBefore, countsAfter,
                   "No group configured or no message sent");

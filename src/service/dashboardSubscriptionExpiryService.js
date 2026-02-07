@@ -1,14 +1,10 @@
 import { query } from '../repository/db.js';
 import { expireSubscription } from './dashboardSubscriptionService.js';
-import { sendWithClientFallback, formatToWhatsAppId } from '../utils/waHelper.js';
-import waClient, { waGatewayClient, waUserClient } from './waService.js';
+import { formatToWhatsAppId, safeSendMessage } from '../utils/waHelper.js';
+import { waGatewayClient } from './waService.js';
+import { sendTelegramLog, sendTelegramError } from './telegramService.js';
 
 const DEFAULT_TIMEZONE = 'Asia/Jakarta';
-const waFallbackClients = [
-  { client: waGatewayClient, label: 'WA-GATEWAY' },
-  { client: waClient, label: 'WA' },
-  { client: waUserClient, label: 'WA-USER' },
-];
 
 export function selectExpiredSubscriptions(subscriptions = [], now = new Date()) {
   const nowTs = new Date(now).getTime();
@@ -59,16 +55,19 @@ async function notifyExpiry(subscription) {
   if (!chatId) return false;
 
   const message = buildExpiryMessage(subscription);
-  return sendWithClientFallback({
-    chatId,
-    message,
-    clients: waFallbackClients,
-    reportClient: waClient,
-    reportContext: {
-      source: 'dashboardSubscriptionExpiry',
-      subscriptionId: subscription.subscription_id,
-    },
-  });
+  
+  try {
+    const sent = await safeSendMessage(waGatewayClient, chatId, message);
+    if (sent) {
+      await sendTelegramLog('INFO', `Subscription expiry notification sent to ${chatId}`);
+    } else {
+      await sendTelegramLog('WARN', `Failed to send subscription expiry notification to ${chatId}`);
+    }
+    return sent;
+  } catch (error) {
+    await sendTelegramError('dashboardSubscriptionExpiry', error);
+    return false;
+  }
 }
 
 export async function fetchActiveSubscriptions() {

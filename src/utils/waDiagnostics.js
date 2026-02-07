@@ -1,17 +1,13 @@
 /**
  * WhatsApp Service Diagnostics Utility
- * Helps diagnose message reception issues
+ * Helps diagnose Gateway client issues
  */
 
 export function logWaServiceDiagnostics(
-  waClient,
-  waUserClient,
   waGatewayClient,
   readinessSummary = null
 ) {
   const clients = [
-    { name: 'waClient', label: 'WA', client: waClient },
-    { name: 'waUserClient', label: 'WA-USER', client: waUserClient },
     { name: 'waGatewayClient', label: 'WA-GATEWAY', client: waGatewayClient },
   ];
   const readinessByLabel = new Map(
@@ -20,9 +16,9 @@ export function logWaServiceDiagnostics(
   const missingChromeHint =
     'Hint: set WA_PUPPETEER_EXECUTABLE_PATH or run "npx puppeteer browsers install chrome".';
 
-  console.log('\n========== WA SERVICE DIAGNOSTICS ==========');
+  console.log('\n========== WA GATEWAY SERVICE DIAGNOSTICS ==========');
   console.log(`WA_SERVICE_SKIP_INIT: ${process.env.WA_SERVICE_SKIP_INIT || 'not set'}`);
-  console.log(`Should Init Clients: ${process.env.WA_SERVICE_SKIP_INIT !== 'true'}`);
+  console.log(`Should Init Gateway Client: ${process.env.WA_SERVICE_SKIP_INIT !== 'true'}`);
 
   clients.forEach(({ name, label, client }) => {
     const readiness = readinessByLabel.get(label);
@@ -50,55 +46,33 @@ export function logWaServiceDiagnostics(
       console.log('  Readiness summary: unavailable');
     }
     
-    // Check if message listeners are attached
+    // Check if the client has listeners attached
     if (client && typeof client.listenerCount === 'function') {
-      console.log(`  'message' listener count: ${client.listenerCount('message')}`);
       console.log(`  'ready' listener count: ${client.listenerCount('ready')}`);
       console.log(`  'qr' listener count: ${client.listenerCount('qr')}`);
     }
   });
 
-  console.log('\n===========================================\n');
+  console.log('\n====================================================\n');
 }
 
-export function checkMessageListenersAttached(waClient, waUserClient, waGatewayClient) {
-  const clients = [
-    { name: 'waClient', client: waClient },
-    { name: 'waUserClient', client: waUserClient },
-    { name: 'waGatewayClient', client: waGatewayClient },
-  ];
-
-  let allGood = true;
-  clients.forEach(({ name, client }) => {
-    if (!client) {
-      console.error(`[WA DIAGNOSTICS] ${name} is not defined!`);
-      allGood = false;
-      return;
-    }
-
-    if (typeof client.listenerCount !== 'function') {
-      console.warn(`[WA DIAGNOSTICS] ${name} does not have listenerCount method`);
-      return;
-    }
-
-    const messageListeners = client.listenerCount('message');
-    if (messageListeners === 0) {
-      console.error(`[WA DIAGNOSTICS] ${name} has NO 'message' event listeners attached!`);
-      console.error(`[WA DIAGNOSTICS] This means messages will NOT be received by this client.`);
-      console.error(`[WA DIAGNOSTICS] Check if WA_SERVICE_SKIP_INIT is set to 'true'`);
-      allGood = false;
-    } else {
-      console.log(`[WA DIAGNOSTICS] ✓ ${name} has ${messageListeners} 'message' listener(s)`);
-    }
-  });
-
-  if (!allGood) {
-    console.error('\n[WA DIAGNOSTICS] ⚠️  MESSAGE RECEPTION ISSUE DETECTED!');
-    console.error('[WA DIAGNOSTICS] The WhatsApp bot will NOT be able to receive messages.');
-    console.error('[WA DIAGNOSTICS] Please check your environment configuration.\n');
-  } else {
-    console.log('\n[WA DIAGNOSTICS] ✓ All message listeners are properly attached.\n');
+export function checkGatewayClientAttached(waGatewayClient) {
+  if (!waGatewayClient) {
+    console.error('[WA DIAGNOSTICS] waGatewayClient is not defined!');
+    return false;
   }
 
-  return allGood;
+  if (typeof waGatewayClient.on !== 'function') {
+    console.warn('[WA DIAGNOSTICS] waGatewayClient is not an EventEmitter');
+    return false;
+  }
+
+  console.log('[WA DIAGNOSTICS] ✓ Gateway client is properly initialized\n');
+  return true;
+}
+
+// Keep old function signature for backward compatibility but delegate to new function
+export function checkMessageListenersAttached(waClient, waUserClient, waGatewayClient) {
+  // Only check Gateway client now
+  return checkGatewayClientAttached(waGatewayClient || waClient);
 }
