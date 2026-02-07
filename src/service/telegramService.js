@@ -13,6 +13,7 @@ dotenv.config();
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const TELEGRAM_ENABLED = Boolean(TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID);
+const MAX_STACK_TRACE_LENGTH = 500;
 
 let telegramBot = null;
 
@@ -83,7 +84,15 @@ export async function sendTelegramLog(level, message) {
   }
 
   const timestamp = new Date().toISOString();
-  const emoji = level === 'ERROR' ? '❌' : level === 'WARN' ? '⚠️' : 'ℹ️';
+  
+  // Map log levels to emojis
+  const emojiMap = {
+    ERROR: '❌',
+    WARN: '⚠️',
+    INFO: 'ℹ️'
+  };
+  
+  const emoji = emojiMap[level] || 'ℹ️';
   const formattedMessage = `${emoji} *${level}* [${timestamp}]\n${message}`;
 
   return sendTelegramMessage(formattedMessage);
@@ -101,7 +110,7 @@ export async function sendTelegramError(context, error) {
   }
 
   const errorMessage = error?.message || String(error);
-  const stack = error?.stack ? `\n\`\`\`\n${error.stack.substring(0, 500)}\n\`\`\`` : '';
+  const stack = error?.stack ? `\n\`\`\`\n${error.stack.substring(0, MAX_STACK_TRACE_LENGTH)}\n\`\`\`` : '';
   const message = `❌ *ERROR in ${context}*\n${errorMessage}${stack}`;
 
   return sendTelegramMessage(message);

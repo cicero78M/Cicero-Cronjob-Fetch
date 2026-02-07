@@ -55,6 +55,9 @@ if (normalizedGatewayClientId === DEFAULT_GATEWAY_CLIENT_ID) {
 console.log(`[WA] Initializing Gateway client: ${normalizedGatewayClientId}`);
 
 // Initialize only the Gateway WhatsApp client
+// Note: Using top-level await here is intentional and supported in ES modules (Node.js 14+)
+// This ensures the client is initialized before any code imports this module
+// The module loading is blocked until initialization completes
 export let waGatewayClient = await createWwebjsClient(normalizedGatewayClientId);
 
 // Setup readiness flag

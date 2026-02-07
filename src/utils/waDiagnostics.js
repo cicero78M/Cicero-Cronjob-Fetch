@@ -73,6 +73,6 @@ export function checkGatewayClientAttached(waGatewayClient) {
 
 // Keep old function signature for backward compatibility but delegate to new function
 export function checkMessageListenersAttached(waClient, waUserClient, waGatewayClient) {
-  // Only check Gateway client now
-  return checkGatewayClientAttached(waGatewayClient || waClient);
+  // Only check Gateway client now (removed fallback to waClient since it no longer exists)
+  return checkGatewayClientAttached(waGatewayClient);
 }
