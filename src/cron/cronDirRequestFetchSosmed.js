@@ -199,7 +199,7 @@ export async function runCron(options = {}) {
         logMessage("client", clientId, "processClient", "error", null, null, 
           clientErr?.message || String(clientErr),
           { name: clientErr?.name, stack: clientErr?.stack?.slice(0, 200) });
-        await sendTelegramError(`${LOG_TAG} - Client ${clientId}`, clientErr);
+        await sendTelegramError(`${LOG_TAG}: Client ${clientId}`, clientErr);
       }
     }
 
