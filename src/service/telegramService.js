@@ -46,8 +46,15 @@ telegramBot = initializeTelegramBot();
  * @returns {Promise<boolean>} Success status
  */
 export async function sendTelegramMessage(message, options = {}) {
+  // Always log to server console first
+  if (message && typeof message === 'string') {
+    console.log(`[TELEGRAM] Attempting to send: ${message.substring(0, 200)}${message.length > 200 ? '...' : ''}`);
+  } else {
+    console.log(`[TELEGRAM] Attempting to send: [invalid message]`);
+  }
+
   if (!TELEGRAM_ENABLED) {
-    console.warn('[TELEGRAM] Message not sent: Bot not configured');
+    console.warn('[TELEGRAM] Message not sent: Bot not configured (check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)');
     return false;
   }
 
@@ -63,10 +70,10 @@ export async function sendTelegramMessage(message, options = {}) {
     };
 
     await telegramBot.sendMessage(TELEGRAM_CHAT_ID, message, messageOptions);
-    console.log(`[TELEGRAM] Message sent successfully: ${message.substring(0, 100)}...`);
+    console.log(`[TELEGRAM] ✅ Message sent successfully to Telegram`);
     return true;
   } catch (error) {
-    console.error('[TELEGRAM] Failed to send message:', error.message);
+    console.error('[TELEGRAM] ❌ Failed to send message to Telegram:', error.message);
     return false;
   }
 }
@@ -79,10 +86,6 @@ export async function sendTelegramMessage(message, options = {}) {
  * @returns {Promise<boolean>} Success status
  */
 export async function sendTelegramLog(level, message) {
-  if (!TELEGRAM_ENABLED) {
-    return false;
-  }
-
   const timestamp = new Date().toISOString();
   
   // Map log levels to emojis
@@ -95,6 +98,14 @@ export async function sendTelegramLog(level, message) {
   const emoji = emojiMap[level] || 'ℹ️';
   const formattedMessage = `${emoji} *${level}* [${timestamp}]\n${message}`;
 
+  // Always log to server console
+  console.log(`[TELEGRAM LOG] ${level}: ${message}`);
+
+  if (!TELEGRAM_ENABLED) {
+    console.warn('[TELEGRAM LOG] Skipping Telegram send: Bot not configured');
+    return false;
+  }
+
   return sendTelegramMessage(formattedMessage);
 }
 
@@ -105,13 +116,20 @@ export async function sendTelegramLog(level, message) {
  * @returns {Promise<boolean>} Success status
  */
 export async function sendTelegramError(context, error) {
-  if (!TELEGRAM_ENABLED) {
-    return false;
+  const errorMessage = error?.message || String(error);
+  const truncatedStack = error?.stack ? error.stack.substring(0, MAX_STACK_TRACE_LENGTH) : '';
+  const message = `❌ *ERROR in ${context}*\n${errorMessage}${truncatedStack ? `\n\`\`\`\n${truncatedStack}\n\`\`\`` : ''}`;
+
+  // Always log to server console
+  console.error(`[TELEGRAM ERROR] ${context}: ${errorMessage}`);
+  if (truncatedStack) {
+    console.error(`[TELEGRAM ERROR] Stack trace: ${truncatedStack}`);
   }
 
-  const errorMessage = error?.message || String(error);
-  const stack = error?.stack ? `\n\`\`\`\n${error.stack.substring(0, MAX_STACK_TRACE_LENGTH)}\n\`\`\`` : '';
-  const message = `❌ *ERROR in ${context}*\n${errorMessage}${stack}`;
+  if (!TELEGRAM_ENABLED) {
+    console.warn('[TELEGRAM ERROR] Skipping Telegram send: Bot not configured');
+    return false;
+  }
 
   return sendTelegramMessage(message);
 }
@@ -123,10 +141,6 @@ export async function sendTelegramError(context, error) {
  * @returns {Promise<boolean>} Success status
  */
 export async function sendTelegramCronReport(jobName, report) {
-  if (!TELEGRAM_ENABLED) {
-    return false;
-  }
-
   const lines = [
     `📊 *Cron Job Report: ${jobName}*`,
     '',
@@ -147,7 +161,19 @@ export async function sendTelegramCronReport(jobName, report) {
     lines.push(report.details);
   }
 
-  return sendTelegramMessage(lines.join('\n'));
+  const reportText = lines.join('\n');
+
+  // Always log to server console - truncate if too long
+  console.log(`[TELEGRAM CRON REPORT] ${jobName}`);
+  const reportSummary = reportText.length > 500 ? reportText.substring(0, 500) + '...' : reportText;
+  console.log(`[TELEGRAM CRON REPORT] ${reportSummary}`);
+
+  if (!TELEGRAM_ENABLED) {
+    console.warn('[TELEGRAM CRON REPORT] Skipping Telegram send: Bot not configured');
+    return false;
+  }
+
+  return sendTelegramMessage(reportText);
 }
 
 /**
