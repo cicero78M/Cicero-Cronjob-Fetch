@@ -5,7 +5,7 @@ import { fetchTiktokProfile } from "./tiktokRapidService.js";
 import { hasUserLikedBetween } from "../model/instaLikeModel.js";
 import { hasUserCommentedBetween } from "../model/tiktokCommentModel.js";
 import { normalizeUserWhatsAppId, safeSendMessage } from "../utils/waHelper.js";
-import waClient, { waitForWaReady } from "./waService.js";
+import { waGatewayClient, waitForGatewayReady } from "./waService.js";
 
 const numberFormatter = new Intl.NumberFormat("id-ID");
 export const UPDATE_DATA_LINK = "https://papiqo.com/claim";
@@ -1092,9 +1092,9 @@ export async function sendComplaintWhatsappResponse({
   }
 
   try {
-    await waitForWaReady();
+    await waitForGatewayReady();
   } catch (err) {
-    const reason = `wa_not_ready: ${err?.message || "unknown_error"}`;
+    const reason = `wa_gateway_not_ready: ${err?.message || "unknown_error"}`;
     targets.forEach((entry) => {
       entry.status = "failed";
       entry.reason = reason;
@@ -1103,7 +1103,7 @@ export async function sendComplaintWhatsappResponse({
   }
 
   for (const entry of targets) {
-    const sent = await safeSendMessage(waClient, entry.target, message);
+    const sent = await safeSendMessage(waGatewayClient, entry.target, message);
     entry.status = sent ? "sent" : "failed";
     if (!sent) {
       entry.reason = "send_failed";

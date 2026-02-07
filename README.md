@@ -8,6 +8,8 @@ This service runs scheduled cron jobs to:
 - Fetch Instagram posts, likes, and comments
 - Fetch TikTok posts and comments
 - Store all data in PostgreSQL database
+- Send task notifications via WhatsApp Gateway
+- Send system logs and errors via Telegram
 
 ## Features
 
@@ -17,6 +19,8 @@ This service runs scheduled cron jobs to:
 - **Database Storage**: All data stored in PostgreSQL
 - **Client Management**: Supports multiple social media accounts
 - **Error Handling**: Robust error logging and recovery
+- **WhatsApp Notifications**: Social media task notifications via WA Gateway
+- **Telegram Logging**: System logs and errors sent to Telegram
 
 ## Requirements
 
@@ -24,6 +28,8 @@ This service runs scheduled cron jobs to:
 - PostgreSQL database
 - RapidAPI keys for Instagram and TikTok APIs
 - Redis (for caching)
+- Telegram Bot Token (for system logs)
+- WhatsApp Gateway (for task notifications)
 
 ## Installation
 
@@ -42,6 +48,14 @@ DATABASE_URL=postgresql://user:password@localhost:5432/cicero
 # Redis
 REDIS_URL=redis://localhost:6379
 
+# Telegram Bot (for system logs and errors)
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+TELEGRAM_CHAT_ID=your_telegram_chat_id_here
+
+# WhatsApp Gateway (for social media task notifications)
+GATEWAY_WHATSAPP_ADMIN=628xxxxxx,628yyyyyy
+GATEWAY_WA_CLIENT_ID=wa-gateway-prod
+
 # API Keys
 RAPIDAPI_KEY=your_rapidapi_key_here
 RAPIDAPI_INSTAGRAM_HOST=social-api4.p.rapidapi.com
@@ -50,6 +64,13 @@ RAPIDAPI_TIKTOK_HOST=tiktok-api23.p.rapidapi.com
 # Environment
 NODE_ENV=production
 ```
+
+### Setting up Telegram Bot
+
+1. Create a bot using [@BotFather](https://t.me/botfather) on Telegram
+2. Get your bot token from BotFather
+3. Get your chat ID by messaging your bot and visiting: `https://api.telegram.org/bot<YourBOTToken>/getUpdates`
+4. Add these values to your `.env` file
 
 ## Usage
 
