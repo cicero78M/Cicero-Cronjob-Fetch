@@ -47,7 +47,11 @@ telegramBot = initializeTelegramBot();
  */
 export async function sendTelegramMessage(message, options = {}) {
   // Always log to server console first
-  console.log(`[TELEGRAM] Attempting to send: ${message.substring(0, 200)}${message.length > 200 ? '...' : ''}`);
+  if (message && typeof message === 'string') {
+    console.log(`[TELEGRAM] Attempting to send: ${message.substring(0, 200)}${message.length > 200 ? '...' : ''}`);
+  } else {
+    console.log(`[TELEGRAM] Attempting to send: [invalid message]`);
+  }
 
   if (!TELEGRAM_ENABLED) {
     console.warn('[TELEGRAM] Message not sent: Bot not configured (check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)');
@@ -113,13 +117,13 @@ export async function sendTelegramLog(level, message) {
  */
 export async function sendTelegramError(context, error) {
   const errorMessage = error?.message || String(error);
-  const stack = error?.stack ? `\n\`\`\`\n${error.stack.substring(0, MAX_STACK_TRACE_LENGTH)}\n\`\`\`` : '';
-  const message = `❌ *ERROR in ${context}*\n${errorMessage}${stack}`;
+  const truncatedStack = error?.stack ? error.stack.substring(0, MAX_STACK_TRACE_LENGTH) : '';
+  const message = `❌ *ERROR in ${context}*\n${errorMessage}${truncatedStack ? `\n\`\`\`\n${truncatedStack}\n\`\`\`` : ''}`;
 
   // Always log to server console
   console.error(`[TELEGRAM ERROR] ${context}: ${errorMessage}`);
-  if (stack) {
-    console.error(`[TELEGRAM ERROR] Stack trace: ${error.stack.substring(0, MAX_STACK_TRACE_LENGTH)}`);
+  if (truncatedStack) {
+    console.error(`[TELEGRAM ERROR] Stack trace: ${truncatedStack}`);
   }
 
   if (!TELEGRAM_ENABLED) {
@@ -159,9 +163,10 @@ export async function sendTelegramCronReport(jobName, report) {
 
   const reportText = lines.join('\n');
 
-  // Always log to server console
+  // Always log to server console - truncate if too long
   console.log(`[TELEGRAM CRON REPORT] ${jobName}`);
-  console.log(`[TELEGRAM CRON REPORT] ${reportText}`);
+  const reportSummary = reportText.length > 500 ? reportText.substring(0, 500) + '...' : reportText;
+  console.log(`[TELEGRAM CRON REPORT] ${reportSummary}`);
 
   if (!TELEGRAM_ENABLED) {
     console.warn('[TELEGRAM CRON REPORT] Skipping Telegram send: Bot not configured');
