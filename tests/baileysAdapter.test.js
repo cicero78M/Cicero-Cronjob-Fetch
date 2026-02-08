@@ -36,7 +36,7 @@ jest.unstable_mockModule('@whiskeysockets/baileys', () => ({
     saveCreds: jest.fn(),
   }),
   fetchLatestBaileysVersion: jest.fn().mockResolvedValue({
-    version: [2, 3000, 0],
+    version: [2, 2412, 54],
     isLatest: true,
   }),
   makeCacheableSignalKeyStore: jest.fn().mockReturnValue({}),

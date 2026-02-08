@@ -29,7 +29,7 @@ This service runs scheduled cron jobs to:
 - RapidAPI keys for Instagram and TikTok APIs
 - Redis (for caching)
 - Telegram Bot Token (for system logs)
-- WhatsApp Gateway (for task notifications)
+- WhatsApp Gateway using Baileys (for task notifications)
 
 ## Installation
 
