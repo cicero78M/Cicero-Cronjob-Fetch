@@ -5,8 +5,8 @@ import qrcode from "qrcode-terminal";
 import dotenv from "dotenv";
 import { env } from "../config/env.js";
 
-// WhatsApp client using whatsapp-web.js
-import { createWwebjsClient } from "./wwebjsAdapter.js";
+// WhatsApp client using Baileys
+import { createBaileysClient } from "./baileysAdapter.js";
 
 // Utility imports needed for messaging
 import { formatToWhatsAppId } from "../utils/waHelper.js";
@@ -58,7 +58,7 @@ console.log(`[WA] Initializing Gateway client: ${normalizedGatewayClientId}`);
 // Note: Using top-level await here is intentional and supported in ES modules (Node.js 14+)
 // This ensures the client is initialized before any code imports this module
 // The module loading is blocked until initialization completes
-export let waGatewayClient = await createWwebjsClient(normalizedGatewayClientId);
+export let waGatewayClient = await createBaileysClient(normalizedGatewayClientId);
 
 // Setup readiness flag
 let isGatewayReady = false;
