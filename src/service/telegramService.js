@@ -16,6 +16,18 @@ const TELEGRAM_ENABLED = Boolean(TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID);
 const MAX_STACK_TRACE_LENGTH = 500;
 
 let telegramBot = null;
+let botNotConfiguredWarningShown = false;
+
+/**
+ * Log "Bot not configured" warning only once
+ * @param {string} context - Context identifier (LOG, ERROR, CRON REPORT)
+ */
+function logConfigWarningOnce(context) {
+  if (!botNotConfiguredWarningShown) {
+    console.warn(`[TELEGRAM ${context}] Skipping Telegram send: Bot not configured`);
+    botNotConfiguredWarningShown = true;
+  }
+}
 
 /**
  * Initialize Telegram bot
@@ -102,7 +114,7 @@ export async function sendTelegramLog(level, message) {
   console.log(`[TELEGRAM LOG] ${level}: ${message}`);
 
   if (!TELEGRAM_ENABLED) {
-    console.warn('[TELEGRAM LOG] Skipping Telegram send: Bot not configured');
+    logConfigWarningOnce('LOG');
     return false;
   }
 
@@ -127,7 +139,7 @@ export async function sendTelegramError(context, error) {
   }
 
   if (!TELEGRAM_ENABLED) {
-    console.warn('[TELEGRAM ERROR] Skipping Telegram send: Bot not configured');
+    logConfigWarningOnce('ERROR');
     return false;
   }
 
@@ -169,7 +181,7 @@ export async function sendTelegramCronReport(jobName, report) {
   console.log(`[TELEGRAM CRON REPORT] ${reportSummary}`);
 
   if (!TELEGRAM_ENABLED) {
-    console.warn('[TELEGRAM CRON REPORT] Skipping Telegram send: Bot not configured');
+    logConfigWarningOnce('CRON REPORT');
     return false;
   }
 
