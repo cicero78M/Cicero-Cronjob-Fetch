@@ -185,20 +185,22 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             
             if (isBadMacError) {
               const now = Date.now();
+              const previousErrorTime = lastMacErrorTime; // Store previous time before updating
               
               // Check if this is a rapid error (within 5 seconds of previous error)
-              const isRapidError = lastMacErrorTime > 0 && (now - lastMacErrorTime) < MAC_ERROR_RAPID_THRESHOLD;
+              const isRapidError = previousErrorTime > 0 && (now - previousErrorTime) < MAC_ERROR_RAPID_THRESHOLD;
+              const timeSinceLastError = previousErrorTime > 0 ? now - previousErrorTime : 0;
               
               // Reset counter if too much time has passed since last error (errors are not consecutive)
-              if (lastMacErrorTime > 0 && (now - lastMacErrorTime) > MAC_ERROR_RESET_TIMEOUT) {
+              if (previousErrorTime > 0 && timeSinceLastError > MAC_ERROR_RESET_TIMEOUT) {
                 console.log(
-                  `[BAILEYS] Resetting Bad MAC counter due to timeout (${Math.round((now - lastMacErrorTime)/1000)}s since last error)`
+                  `[BAILEYS] Resetting Bad MAC counter due to timeout (${Math.round(timeSinceLastError/1000)}s since last error)`
                 );
                 consecutiveMacErrors = 0;
               }
               
               consecutiveMacErrors++;
-              lastMacErrorTime = now;
+              lastMacErrorTime = now; // Update timestamp after storing previous value
               
               console.error(
                 `[BAILEYS] Bad MAC error detected (${consecutiveMacErrors}/${MAX_CONSECUTIVE_MAC_ERRORS})${isRapidError ? ' [RAPID]' : ''}:`,
@@ -213,7 +215,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
               
               if (shouldRecover && !reinitInProgress) {
                 const reason = isRapidError 
-                  ? `Rapid Bad MAC errors (${Math.round((now - (lastMacErrorTime - (now - lastMacErrorTime)))/1000)}s between errors)`
+                  ? `Rapid Bad MAC errors (${Math.round(timeSinceLastError/1000)}s between errors)`
                   : `${MAX_CONSECUTIVE_MAC_ERRORS} consecutive MAC failures`;
                 
                 console.warn(
