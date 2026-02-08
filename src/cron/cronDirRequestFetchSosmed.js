@@ -18,6 +18,29 @@ const LOG_TAG = "CRON DIRFETCH SOSMED";
 const lastStateByClient = new Map();
 let isFetchInFlight = false;
 
+// Scheduled notification times (Jakarta time) - always send notifications at these times
+const SCHEDULED_NOTIFICATION_TIMES = [
+  { hour: 6, minute: 30 },   // 06:30
+  { hour: 14, minute: 0 },   // 14:00
+  { hour: 17, minute: 0 }    // 17:00
+];
+
+/**
+ * Check if current time matches any scheduled notification time
+ * @returns {boolean} True if current time is a scheduled notification time
+ */
+function isScheduledNotificationTime() {
+  const now = new Date();
+  // Convert to Jakarta time (UTC+7)
+  const jakartaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
+  const currentHour = jakartaTime.getHours();
+  const currentMinute = jakartaTime.getMinutes();
+  
+  return SCHEDULED_NOTIFICATION_TIMES.some(
+    scheduledTime => scheduledTime.hour === currentHour && scheduledTime.minute === currentMinute
+  );
+}
+
 function logMessage(phase, clientId, action, result, countsBefore, countsAfter, message = "", meta = {}) {
   const prefix = `[${LOG_TAG}]${clientId ? `[${clientId}]` : ""}[${phase}]`;
   const countText = countsBefore && countsAfter 
@@ -159,23 +182,44 @@ export async function runCron(options = {}) {
         logMessage("fetchComplete", clientId, "fetchComplete", "completed", countsBefore, countsAfter,
           "Social media fetch completed successfully");
 
-        // Send WhatsApp notification if there are notable changes
-        if (hasNotableChanges(changes)) {
+        // Determine if this is a scheduled notification time
+        const isScheduledTime = isScheduledNotificationTime();
+        const hasChanges = hasNotableChanges(changes);
+        
+        // Send WhatsApp notification if:
+        // 1. There are notable changes (original behavior), OR
+        // 2. It's a scheduled notification time (new behavior - always send at 6:30, 14:00, 17:00)
+        if (hasChanges || isScheduledTime) {
           const changeSummary = buildChangeSummary(changes);
+          const notificationReason = isScheduledTime 
+            ? `Scheduled notification (${hasChanges ? 'with changes: ' + changeSummary : 'no changes'})`
+            : `Changes detected: ${changeSummary}`;
+          
           logMessage("waNotification", clientId, "sendNotification", "start", countsBefore, countsAfter,
-            `Sending WA notification: ${changeSummary}`);
+            `Sending WA notification: ${notificationReason}`);
 
           try {
             // Use only waGatewayClient for task notifications
             if (waGatewayClient) {
-              const notificationSent = await sendTugasNotification(waGatewayClient, clientId, changes);
+              const notificationOptions = {
+                forceScheduled: isScheduledTime,
+                igCount: countsAfter.ig,
+                tiktokCount: countsAfter.tiktok
+              };
+              
+              const notificationSent = await sendTugasNotification(
+                waGatewayClient, 
+                clientId, 
+                changes,
+                notificationOptions
+              );
               
               if (notificationSent) {
                 logMessage("waNotification", clientId, "sendNotification", "completed", countsBefore, countsAfter,
-                  `WA notification sent: ${changeSummary}`);
+                  `WA notification sent: ${notificationReason}`);
                 
                 // Send success log to Telegram
-                await sendTelegramLog("INFO", `Task notification sent for client ${clientId}: ${changeSummary}`);
+                await sendTelegramLog("INFO", `Task notification sent for client ${clientId}: ${notificationReason}`);
               } else {
                 logMessage("waNotification", clientId, "sendNotification", "skipped", countsBefore, countsAfter,
                   "No group configured or no message sent");
@@ -191,7 +235,7 @@ export async function runCron(options = {}) {
           }
         } else {
           logMessage("waNotification", clientId, "sendNotification", "skipped", countsBefore, countsAfter,
-            "No notable changes detected");
+            "No notable changes detected and not a scheduled notification time");
         }
 
       } catch (clientErr) {

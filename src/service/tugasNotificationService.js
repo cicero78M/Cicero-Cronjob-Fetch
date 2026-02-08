@@ -146,14 +146,127 @@ function formatLinkChanges(linkChanges, clientName) {
 }
 
 /**
+ * Normalize WhatsApp group ID to Baileys format
+ * Handles various formats: 
+ * - 120363XXXXXXXXX@g.us (already correct)
+ * - 120363XXXXXXXXX-YYYYYYYYYY@g.us (with additional ID)
+ * - 120363XXXXXXXXX (missing @g.us)
+ * - +62812XXXX or 0812XXXX (phone numbers that should be group IDs)
+ * @param {string} groupId - Group ID in any format
+ * @returns {string} Normalized group ID in Baileys format
+ */
+function normalizeGroupId(groupId) {
+  if (!groupId || typeof groupId !== 'string') {
+    return '';
+  }
+
+  const trimmed = groupId.trim();
+  if (!trimmed) return '';
+
+  // If already has @g.us suffix, return as-is
+  if (trimmed.endsWith('@g.us')) {
+    return trimmed;
+  }
+
+  // If has @s.whatsapp.net or @c.us suffix (individual chat), this is wrong format
+  // Group IDs should always end with @g.us
+  if (trimmed.endsWith('@s.whatsapp.net') || trimmed.endsWith('@c.us')) {
+    console.warn(`[${LOG_TAG}] Invalid group ID format (individual chat ID): ${trimmed}`);
+    return '';
+  }
+
+  // If it looks like a group ID without suffix, add @g.us
+  // Group IDs typically start with digits (e.g., 120363...)
+  if (/^\d+(-\d+)?$/.test(trimmed)) {
+    return `${trimmed}@g.us`;
+  }
+
+  // Log warning for unexpected format
+  console.warn(`[${LOG_TAG}] Unexpected group ID format: ${trimmed}`);
+  return '';
+}
+
+/**
+ * Format task list message for scheduled notifications
+ * @param {string} clientName - Name of the client
+ * @param {number} igCount - Current Instagram post count
+ * @param {number} tiktokCount - Current TikTok post count
+ * @param {Object} changes - Changes object (may be empty)
+ * @returns {string} Formatted message
+ */
+function formatScheduledTaskList(clientName, igCount, tiktokCount, changes = null) {
+  const lines = [
+    `📋 *Daftar Tugas - ${clientName}*`,
+    '',
+    `Status tugas saat ini:`,
+    `📸 Instagram: *${igCount}* konten`,
+    `🎵 TikTok: *${tiktokCount}* konten`,
+    ''
+  ];
+
+  // Add change summary if there are changes
+  if (changes && hasChanges(changes)) {
+    lines.push('📊 *Perubahan Hari Ini:*');
+    
+    if (changes.igAdded && changes.igAdded.length > 0) {
+      lines.push(`✅ +${changes.igAdded.length} konten Instagram baru`);
+    }
+    
+    if (changes.tiktokAdded && changes.tiktokAdded.length > 0) {
+      lines.push(`✅ +${changes.tiktokAdded.length} konten TikTok baru`);
+    }
+    
+    if (changes.igDeleted > 0) {
+      lines.push(`❌ -${changes.igDeleted} konten Instagram dihapus`);
+    }
+    
+    if (changes.tiktokDeleted > 0) {
+      lines.push(`❌ -${changes.tiktokDeleted} konten TikTok dihapus`);
+    }
+    
+    if (changes.linkChanges && changes.linkChanges.length > 0) {
+      lines.push(`🔗 ~${changes.linkChanges.length} perubahan link amplifikasi`);
+    }
+    
+    lines.push('');
+  }
+
+  lines.push('_Pastikan semua tugas telah dikerjakan dengan baik._');
+  
+  return lines.join('\n');
+}
+
+/**
+ * Check if changes object has any changes (helper for scheduled notifications)
+ * @param {Object} changes - Changes object
+ * @returns {boolean} True if there are changes
+ */
+function hasChanges(changes) {
+  if (!changes) return false;
+  return (
+    (changes.igAdded && changes.igAdded.length > 0) ||
+    (changes.tiktokAdded && changes.tiktokAdded.length > 0) ||
+    changes.igDeleted > 0 ||
+    changes.tiktokDeleted > 0 ||
+    (changes.linkChanges && changes.linkChanges.length > 0)
+  );
+}
+
+/**
  * Send task notification to WhatsApp group
  * @param {Object} waClient - WhatsApp client instance
  * @param {string} clientId - Client ID
  * @param {Object} changes - Object containing change details
+ * @param {Object} options - Optional parameters
+ * @param {boolean} options.forceScheduled - Force send as scheduled notification (always send)
+ * @param {number} options.igCount - Current Instagram count (for scheduled notifications)
+ * @param {number} options.tiktokCount - Current TikTok count (for scheduled notifications)
  * @returns {Promise<boolean>} Success status
  */
-export async function sendTugasNotification(waClient, clientId, changes) {
+export async function sendTugasNotification(waClient, clientId, changes, options = {}) {
   try {
+    const { forceScheduled = false, igCount = 0, tiktokCount = 0 } = options;
+
     if (!waClient) {
       console.warn(`[${LOG_TAG}] WhatsApp client not available`);
       return false;
@@ -179,38 +292,49 @@ export async function sendTugasNotification(waClient, clientId, changes) {
     }
 
     // Parse group IDs (can be multiple, separated by comma or semicolon)
-    const groupIds = clientGroup
+    const rawGroupIds = clientGroup
       .split(/[,;]/)
       .map(id => id.trim())
       .filter(id => id.length > 0);
 
+    // Normalize all group IDs to proper Baileys format
+    const groupIds = rawGroupIds
+      .map(id => normalizeGroupId(id))
+      .filter(id => id.length > 0);
+
     if (groupIds.length === 0) {
-      console.log(`[${LOG_TAG}] No valid WhatsApp group IDs for client: ${clientId}`);
+      console.log(`[${LOG_TAG}] No valid WhatsApp group IDs for client: ${clientId} (raw: ${rawGroupIds.join(', ')})`);
       return false;
     }
 
     const clientName = client.nama || clientId;
     const messages = [];
 
-    // Build messages based on changes
-    if (changes.igAdded && changes.igAdded.length > 0) {
-      const msg = formatInstaPostAdditions(changes.igAdded, clientName);
-      if (msg) messages.push(msg);
-    }
+    // If this is a scheduled notification, build scheduled task list
+    if (forceScheduled) {
+      const scheduledMsg = formatScheduledTaskList(clientName, igCount, tiktokCount, changes);
+      if (scheduledMsg) messages.push(scheduledMsg);
+    } else {
+      // Build messages based on changes (original behavior)
+      if (changes.igAdded && changes.igAdded.length > 0) {
+        const msg = formatInstaPostAdditions(changes.igAdded, clientName);
+        if (msg) messages.push(msg);
+      }
 
-    if (changes.tiktokAdded && changes.tiktokAdded.length > 0) {
-      const msg = formatTiktokPostAdditions(changes.tiktokAdded, clientName);
-      if (msg) messages.push(msg);
-    }
+      if (changes.tiktokAdded && changes.tiktokAdded.length > 0) {
+        const msg = formatTiktokPostAdditions(changes.tiktokAdded, clientName);
+        if (msg) messages.push(msg);
+      }
 
-    if (changes.igDeleted > 0 || changes.tiktokDeleted > 0) {
-      const msg = formatPostDeletions(changes, clientName);
-      if (msg) messages.push(msg);
-    }
+      if (changes.igDeleted > 0 || changes.tiktokDeleted > 0) {
+        const msg = formatPostDeletions(changes, clientName);
+        if (msg) messages.push(msg);
+      }
 
-    if (changes.linkChanges && changes.linkChanges.length > 0) {
-      const msg = formatLinkChanges(changes.linkChanges, clientName);
-      if (msg) messages.push(msg);
+      if (changes.linkChanges && changes.linkChanges.length > 0) {
+        const msg = formatLinkChanges(changes.linkChanges, clientName);
+        if (msg) messages.push(msg);
+      }
     }
 
     // If no messages to send, return early
@@ -222,26 +346,23 @@ export async function sendTugasNotification(waClient, clientId, changes) {
     // Send messages to all configured groups
     let sentCount = 0;
     for (const groupId of groupIds) {
-      // Ensure group ID has proper format
-      const formattedGroupId = groupId.includes('@') ? groupId : `${groupId}@g.us`;
-      
-      console.log(`[${LOG_TAG}] Preparing to send ${messages.length} message(s) to group ${formattedGroupId} for client ${clientId}`);
+      console.log(`[${LOG_TAG}] Preparing to send ${messages.length} message(s) to group ${groupId} for client ${clientId}`);
       
       for (const message of messages) {
         try {
           const messagePreview = message.length > 80 ? message.substring(0, 80) + '...' : message;
-          console.log(`[${LOG_TAG}] Sending message to ${formattedGroupId}: ${messagePreview}`);
+          console.log(`[${LOG_TAG}] Sending message to ${groupId}: ${messagePreview}`);
           
-          const result = await safeSendMessage(waClient, formattedGroupId, message);
+          const result = await safeSendMessage(waClient, groupId, message);
           
           if (result) {
             sentCount++;
-            console.log(`[${LOG_TAG}] ✅ Successfully sent notification to group ${formattedGroupId} for client ${clientId}`);
+            console.log(`[${LOG_TAG}] ✅ Successfully sent notification to group ${groupId} for client ${clientId}`);
           } else {
-            console.warn(`[${LOG_TAG}] ⚠️ safeSendMessage returned false for group ${formattedGroupId}`);
+            console.warn(`[${LOG_TAG}] ⚠️ safeSendMessage returned false for group ${groupId}`);
           }
         } catch (err) {
-          console.error(`[${LOG_TAG}] ❌ Failed to send to group ${formattedGroupId}:`, err.message);
+          console.error(`[${LOG_TAG}] ❌ Failed to send to group ${groupId}:`, err.message);
         }
       }
     }
