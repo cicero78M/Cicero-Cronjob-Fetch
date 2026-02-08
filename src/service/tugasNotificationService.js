@@ -8,6 +8,17 @@ import { findByClientId as findTiktokPostsByClientId } from '../model/tiktokPost
 const LOG_TAG = 'TUGAS_NOTIFICATION';
 
 /**
+ * Truncate text with ellipsis if it exceeds max length
+ * @param {string} text - Text to truncate
+ * @param {number} maxLength - Maximum length before truncation
+ * @returns {string} Truncated text
+ */
+function truncateText(text, maxLength) {
+  if (!text) return '';
+  return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+}
+
+/**
  * Format message for Instagram post additions
  * @param {Array} posts - Array of new Instagram posts
  * @param {string} clientName - Name of the client
@@ -25,9 +36,7 @@ function formatInstaPostAdditions(posts, clientName) {
 
   posts.forEach((post, index) => {
     const shortcode = post.shortcode || '';
-    const caption = post.caption ? 
-      (post.caption.length > 80 ? post.caption.substring(0, 80) + '...' : post.caption) : 
-      '(Tidak ada caption)';
+    const caption = post.caption ? truncateText(post.caption, 80) : '(Tidak ada caption)';
     const link = `https://www.instagram.com/p/${shortcode}/`;
     
     lines.push(`${index + 1}. *Post ${shortcode}*`);
@@ -59,9 +68,7 @@ function formatTiktokPostAdditions(posts, clientName) {
 
   posts.forEach((post, index) => {
     const videoId = post.video_id || '';
-    const description = post.description ? 
-      (post.description.length > 80 ? post.description.substring(0, 80) + '...' : post.description) : 
-      '(Tidak ada deskripsi)';
+    const description = post.description ? truncateText(post.description, 80) : '(Tidak ada deskripsi)';
     const link = `https://www.tiktok.com/@${post.author_username || 'user'}/video/${videoId}`;
     
     lines.push(`${index + 1}. *Video ${videoId}*`);
@@ -233,9 +240,7 @@ function formatInstaTaskSection(posts) {
 
   posts.forEach((post, index) => {
     const shortcode = post.shortcode || '';
-    const caption = post.caption ? 
-      (post.caption.length > 60 ? post.caption.substring(0, 60) + '...' : post.caption) : 
-      '(Tidak ada caption)';
+    const caption = post.caption ? truncateText(post.caption, 60) : '(Tidak ada caption)';
     const link = `https://www.instagram.com/p/${shortcode}/`;
     
     lines.push(`${index + 1}. ${link}`);
@@ -261,9 +266,7 @@ function formatTiktokTaskSection(posts) {
 
   posts.forEach((post, index) => {
     const videoId = post.video_id || '';
-    const description = post.description ? 
-      (post.description.length > 60 ? post.description.substring(0, 60) + '...' : post.description) : 
-      '(Tidak ada deskripsi)';
+    const description = post.description ? truncateText(post.description, 60) : '(Tidak ada deskripsi)';
     const username = post.author_username || 'user';
     const link = `https://www.tiktok.com/@${username}/video/${videoId}`;
     
