@@ -1,0 +1,280 @@
+// tests/tugasNotificationService.test.js
+
+import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+
+// Mock dependencies
+jest.unstable_mockModule('../src/model/clientModel.js', () => ({
+  findById: jest.fn(),
+}));
+
+jest.unstable_mockModule('../src/utils/waHelper.js', () => ({
+  safeSendMessage: jest.fn(),
+}));
+
+// Import after mocking
+const { sendTugasNotification, buildChangeSummary } = await import('../src/service/tugasNotificationService.js');
+const { findById } = await import('../src/model/clientModel.js');
+const { safeSendMessage } = await import('../src/utils/waHelper.js');
+
+describe('tugasNotificationService', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  describe('buildChangeSummary', () => {
+    it('should build summary for Instagram additions', () => {
+      const changes = {
+        igAdded: [{ shortcode: 'abc123' }, { shortcode: 'def456' }],
+        tiktokAdded: [],
+        igDeleted: 0,
+        tiktokDeleted: 0,
+        linkChanges: []
+      };
+      
+      const summary = buildChangeSummary(changes);
+      expect(summary).toBe('+2 IG posts');
+    });
+
+    it('should build summary for TikTok additions', () => {
+      const changes = {
+        igAdded: [],
+        tiktokAdded: [{ video_id: '123' }],
+        igDeleted: 0,
+        tiktokDeleted: 0,
+        linkChanges: []
+      };
+      
+      const summary = buildChangeSummary(changes);
+      expect(summary).toBe('+1 TikTok posts');
+    });
+
+    it('should build summary for deletions', () => {
+      const changes = {
+        igAdded: [],
+        tiktokAdded: [],
+        igDeleted: 3,
+        tiktokDeleted: 2,
+        linkChanges: []
+      };
+      
+      const summary = buildChangeSummary(changes);
+      expect(summary).toBe('-3 IG posts, -2 TikTok posts');
+    });
+
+    it('should return "no changes" for empty changes', () => {
+      const changes = {
+        igAdded: [],
+        tiktokAdded: [],
+        igDeleted: 0,
+        tiktokDeleted: 0,
+        linkChanges: []
+      };
+      
+      const summary = buildChangeSummary(changes);
+      expect(summary).toBe('no changes');
+    });
+  });
+
+  describe('sendTugasNotification - Group ID Normalization', () => {
+    const mockWaClient = { sendMessage: jest.fn() };
+    const mockClient = {
+      client_id: 'TEST_CLIENT',
+      nama: 'Test Client',
+      client_group: ''
+    };
+
+    beforeEach(() => {
+      findById.mockResolvedValue(mockClient);
+      safeSendMessage.mockResolvedValue(true);
+    });
+
+    it('should normalize group ID without @g.us suffix', async () => {
+      mockClient.client_group = '120363123456789';
+      
+      await sendTugasNotification(mockWaClient, 'TEST_CLIENT', {
+        igAdded: [{ shortcode: 'abc123', caption: 'Test' }],
+        tiktokAdded: [],
+        igDeleted: 0,
+        tiktokDeleted: 0,
+        linkChanges: []
+      });
+
+      expect(safeSendMessage).toHaveBeenCalledWith(
+        mockWaClient,
+        '120363123456789@g.us',
+        expect.any(String)
+      );
+    });
+
+    it('should handle group ID with @g.us suffix already', async () => {
+      mockClient.client_group = '120363123456789@g.us';
+      
+      await sendTugasNotification(mockWaClient, 'TEST_CLIENT', {
+        igAdded: [{ shortcode: 'abc123', caption: 'Test' }],
+        tiktokAdded: [],
+        igDeleted: 0,
+        tiktokDeleted: 0,
+        linkChanges: []
+      });
+
+      expect(safeSendMessage).toHaveBeenCalledWith(
+        mockWaClient,
+        '120363123456789@g.us',
+        expect.any(String)
+      );
+    });
+
+    it('should handle group ID with additional ID (with hyphen)', async () => {
+      mockClient.client_group = '120363123456789-987654321@g.us';
+      
+      await sendTugasNotification(mockWaClient, 'TEST_CLIENT', {
+        igAdded: [{ shortcode: 'abc123', caption: 'Test' }],
+        tiktokAdded: [],
+        igDeleted: 0,
+        tiktokDeleted: 0,
+        linkChanges: []
+      });
+
+      expect(safeSendMessage).toHaveBeenCalledWith(
+        mockWaClient,
+        '120363123456789-987654321@g.us',
+        expect.any(String)
+      );
+    });
+
+    it('should skip invalid group ID (individual chat format)', async () => {
+      mockClient.client_group = '628123456789@c.us';
+      
+      const result = await sendTugasNotification(mockWaClient, 'TEST_CLIENT', {
+        igAdded: [{ shortcode: 'abc123', caption: 'Test' }],
+        tiktokAdded: [],
+        igDeleted: 0,
+        tiktokDeleted: 0,
+        linkChanges: []
+      });
+
+      expect(result).toBe(false);
+      expect(safeSendMessage).not.toHaveBeenCalled();
+    });
+
+    it('should handle multiple group IDs', async () => {
+      mockClient.client_group = '120363111111111@g.us,120363222222222';
+      
+      await sendTugasNotification(mockWaClient, 'TEST_CLIENT', {
+        igAdded: [{ shortcode: 'abc123', caption: 'Test' }],
+        tiktokAdded: [],
+        igDeleted: 0,
+        tiktokDeleted: 0,
+        linkChanges: []
+      });
+
+      expect(safeSendMessage).toHaveBeenCalledTimes(2);
+      expect(safeSendMessage).toHaveBeenNthCalledWith(
+        1,
+        mockWaClient,
+        '120363111111111@g.us',
+        expect.any(String)
+      );
+      expect(safeSendMessage).toHaveBeenNthCalledWith(
+        2,
+        mockWaClient,
+        '120363222222222@g.us',
+        expect.any(String)
+      );
+    });
+  });
+
+  describe('sendTugasNotification - Scheduled Notifications', () => {
+    const mockWaClient = { sendMessage: jest.fn() };
+    const mockClient = {
+      client_id: 'TEST_CLIENT',
+      nama: 'Test Client',
+      client_group: '120363123456789@g.us'
+    };
+
+    beforeEach(() => {
+      findById.mockResolvedValue(mockClient);
+      safeSendMessage.mockResolvedValue(true);
+    });
+
+    it('should send scheduled notification with task counts', async () => {
+      const changes = {
+        igAdded: [],
+        tiktokAdded: [],
+        igDeleted: 0,
+        tiktokDeleted: 0,
+        linkChanges: []
+      };
+
+      const result = await sendTugasNotification(mockWaClient, 'TEST_CLIENT', changes, {
+        forceScheduled: true,
+        igCount: 10,
+        tiktokCount: 5
+      });
+
+      expect(result).toBe(true);
+      expect(safeSendMessage).toHaveBeenCalledWith(
+        mockWaClient,
+        '120363123456789@g.us',
+        expect.stringContaining('📋 *Daftar Tugas - Test Client*')
+      );
+      expect(safeSendMessage).toHaveBeenCalledWith(
+        mockWaClient,
+        '120363123456789@g.us',
+        expect.stringContaining('📸 Instagram: *10* konten')
+      );
+      expect(safeSendMessage).toHaveBeenCalledWith(
+        mockWaClient,
+        '120363123456789@g.us',
+        expect.stringContaining('🎵 TikTok: *5* konten')
+      );
+    });
+
+    it('should send scheduled notification with changes included', async () => {
+      const changes = {
+        igAdded: [{ shortcode: 'abc123', caption: 'New post' }],
+        tiktokAdded: [],
+        igDeleted: 0,
+        tiktokDeleted: 0,
+        linkChanges: []
+      };
+
+      const result = await sendTugasNotification(mockWaClient, 'TEST_CLIENT', changes, {
+        forceScheduled: true,
+        igCount: 10,
+        tiktokCount: 5
+      });
+
+      expect(result).toBe(true);
+      expect(safeSendMessage).toHaveBeenCalledWith(
+        mockWaClient,
+        '120363123456789@g.us',
+        expect.stringContaining('📊 *Perubahan Hari Ini:*')
+      );
+      expect(safeSendMessage).toHaveBeenCalledWith(
+        mockWaClient,
+        '120363123456789@g.us',
+        expect.stringContaining('✅ +1 konten Instagram baru')
+      );
+    });
+
+    it('should not send notification if no changes and not scheduled', async () => {
+      const changes = {
+        igAdded: [],
+        tiktokAdded: [],
+        igDeleted: 0,
+        tiktokDeleted: 0,
+        linkChanges: []
+      };
+
+      const result = await sendTugasNotification(mockWaClient, 'TEST_CLIENT', changes, {
+        forceScheduled: false,
+        igCount: 10,
+        tiktokCount: 5
+      });
+
+      expect(result).toBe(false);
+      expect(safeSendMessage).not.toHaveBeenCalled();
+    });
+  });
+});
