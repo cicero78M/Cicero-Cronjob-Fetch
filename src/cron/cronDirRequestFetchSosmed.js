@@ -24,7 +24,7 @@ const SCHEDULED_NOTIFICATION_TIMES = [
   { hour: 15, minute: 30 },   // 14:00
   { hour: 16, minute: 30 },    // 17:00
   { hour: 16, minute: 45 },    // 17:00
-  { hour: 17, minute: 00 }    // 17:00
+  { hour: 17, minute: 0 }    // 17:00
 
 ];
 
