@@ -87,8 +87,9 @@ export async function waitForGatewayReady(timeout = 30000) {
   });
 }
 
-// Handle client ready event
+// Handle client events and connect
 if (waGatewayClient && shouldInitWhatsAppClients) {
+  // Register event handlers BEFORE connecting
   waGatewayClient.on('ready', () => {
     isGatewayReady = true;
     console.log('[WA GATEWAY] Client is ready');
@@ -111,6 +112,11 @@ if (waGatewayClient && shouldInitWhatsAppClients) {
     console.warn('[WA GATEWAY] Client disconnected:', reason);
     isGatewayReady = false;
   });
+
+  // Now connect the client
+  console.log(`[WA GATEWAY] Connecting client: ${normalizedGatewayClientId}`);
+  await waGatewayClient.connect();
+  console.log(`[WA GATEWAY] Connection initiated for: ${normalizedGatewayClientId}`);
 }
 
 // =======================
