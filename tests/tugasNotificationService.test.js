@@ -299,8 +299,8 @@ describe('tugasNotificationService', () => {
       
       // Mock TikTok posts
       getPostsTodayByClientTiktok.mockResolvedValue([
-        { video_id: 'tiktok123', description: 'Test TikTok video 1', author_username: 'testuser' },
-        { video_id: 'tiktok456', description: 'Test TikTok video 2', author_username: 'testuser' }
+        { video_id: 'tiktok123', caption: 'Test TikTok video 1', author_username: 'testuser' },
+        { video_id: 'tiktok456', caption: 'Test TikTok video 2', author_username: 'testuser' }
       ]);
 
       const changes = {
