@@ -61,6 +61,8 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   let connectStartedAt = null;
   let reinitInProgress = false;
   let reconnectTimeout = null;
+  let consecutiveMacErrors = 0;
+  const MAX_CONSECUTIVE_MAC_ERRORS = 3;
 
   // Pino logger configuration (silent unless debug is enabled)
   const logger = P({ 
@@ -118,6 +120,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
           // Connection opened
           if (connection === 'open') {
             console.log('[BAILEYS] Connection opened successfully');
+            consecutiveMacErrors = 0; // Reset counter on successful connection
             emitter.emit('authenticated');
             emitter.emit('ready');
           }
@@ -137,6 +140,44 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             if (shouldReconnect && !reinitInProgress) {
               console.log('[BAILEYS] Attempting to reconnect...');
               reconnectTimeout = setTimeout(() => startConnect('auto-reconnect'), 3000);
+            }
+          }
+
+          // Check for Bad MAC and session errors
+          if (lastDisconnect?.error) {
+            const error = lastDisconnect.error;
+            const errorMessage = error?.message || String(error);
+            const errorStack = error?.stack || '';
+            
+            // Detect Bad MAC errors from libsignal
+            const isBadMacError = errorMessage.includes('Bad MAC') || 
+                                 errorStack.includes('Bad MAC') ||
+                                 errorMessage.includes('verifyMAC') ||
+                                 errorStack.includes('crypto.js');
+            
+            if (isBadMacError) {
+              consecutiveMacErrors++;
+              console.error(
+                `[BAILEYS] Bad MAC error detected (${consecutiveMacErrors}/${MAX_CONSECUTIVE_MAC_ERRORS}):`,
+                errorMessage
+              );
+              
+              // After multiple consecutive MAC errors, reinitialize with session clear
+              if (consecutiveMacErrors >= MAX_CONSECUTIVE_MAC_ERRORS) {
+                console.warn(
+                  `[BAILEYS] Too many consecutive Bad MAC errors (${consecutiveMacErrors}), reinitializing with session clear`
+                );
+                consecutiveMacErrors = 0; // Reset counter
+                
+                // Reinitialize with session clear
+                if (!reinitInProgress) {
+                  await reinitializeClient(
+                    'bad-mac-error',
+                    `${MAX_CONSECUTIVE_MAC_ERRORS} consecutive MAC failures`,
+                    { clearAuthSessionOverride: true }
+                  );
+                }
+              }
             }
           }
         });
