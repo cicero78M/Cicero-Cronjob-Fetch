@@ -362,9 +362,12 @@ export async function createBaileysClient(clientId = 'wa-admin') {
 
     try {
       let sentMsg;
+      let messagePreview = '';
 
       // Handle document sending
       if (content && typeof content === 'object' && 'document' in content) {
+        messagePreview = `document: ${content.fileName || 'unnamed'}`;
+        console.log(`[BAILEYS] Sending document to ${jid}: ${content.fileName || 'unnamed'}`);
         sentMsg = await sock.sendMessage(jid, {
           document: content.document,
           mimetype: content.mimetype || 'application/octet-stream',
@@ -373,11 +376,16 @@ export async function createBaileysClient(clientId = 'wa-admin') {
       } else {
         // Handle text messages
         const text = typeof content === 'string' ? content : content?.text ?? '';
+        messagePreview = text.length > 64 ? text.substring(0, 64) + '...' : text;
+        console.log(`[BAILEYS] Sending text message to ${jid}: ${messagePreview}`);
         sentMsg = await sock.sendMessage(jid, { text });
       }
 
+      const messageId = sentMsg?.key?.id || '';
+      console.log(`[BAILEYS] Message sent successfully to ${jid}, messageId: ${messageId}`);
+      
       // Return message ID in compatible format
-      return sentMsg?.key?.id || '';
+      return messageId;
     } catch (err) {
       console.error('[BAILEYS] sendMessage failed:', err?.message || err);
       const error = new Error(`sendMessage failed: ${err?.message || err}`);
