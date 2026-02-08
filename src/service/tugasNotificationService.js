@@ -225,13 +225,23 @@ export async function sendTugasNotification(waClient, clientId, changes) {
       // Ensure group ID has proper format
       const formattedGroupId = groupId.includes('@') ? groupId : `${groupId}@g.us`;
       
+      console.log(`[${LOG_TAG}] Preparing to send ${messages.length} message(s) to group ${formattedGroupId} for client ${clientId}`);
+      
       for (const message of messages) {
         try {
-          await safeSendMessage(waClient, formattedGroupId, message);
-          sentCount++;
-          console.log(`[${LOG_TAG}] Sent notification to group ${formattedGroupId} for client ${clientId}`);
+          const messagePreview = message.length > 80 ? message.substring(0, 80) + '...' : message;
+          console.log(`[${LOG_TAG}] Sending message to ${formattedGroupId}: ${messagePreview}`);
+          
+          const result = await safeSendMessage(waClient, formattedGroupId, message);
+          
+          if (result) {
+            sentCount++;
+            console.log(`[${LOG_TAG}] ✅ Successfully sent notification to group ${formattedGroupId} for client ${clientId}`);
+          } else {
+            console.warn(`[${LOG_TAG}] ⚠️ safeSendMessage returned false for group ${formattedGroupId}`);
+          }
         } catch (err) {
-          console.error(`[${LOG_TAG}] Failed to send to group ${formattedGroupId}:`, err.message);
+          console.error(`[${LOG_TAG}] ❌ Failed to send to group ${formattedGroupId}:`, err.message);
         }
       }
     }
