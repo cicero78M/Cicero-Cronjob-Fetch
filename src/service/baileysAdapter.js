@@ -306,6 +306,9 @@ export async function createBaileysClient(clientId = 'wa-admin') {
                                      (isRapidError && consecutiveMacErrors >= 1);
                 
                 if (shouldRecover && !reinitInProgress) {
+                  // Set flag immediately to prevent race conditions
+                  reinitInProgress = true;
+                  
                   const reason = isRapidError 
                     ? `Rapid Bad MAC errors during message decryption (${Math.round(timeSinceLastError/1000)}s between errors)`
                     : `${MAX_CONSECUTIVE_MAC_ERRORS} consecutive MAC failures during message processing`;
@@ -315,16 +318,39 @@ export async function createBaileysClient(clientId = 'wa-admin') {
                   );
                   
                   // Trigger reinitialization asynchronously to not block message processing
-                  reinitializeClient(
-                    'bad-mac-error-message-handler',
-                    reason,
-                    { clearAuthSessionOverride: true }
-                  ).then(() => {
-                    consecutiveMacErrors = 0;
-                    lastMacErrorTime = 0;
-                  }).catch(err => {
-                    console.error('[BAILEYS] Failed to reinitialize after Bad MAC:', err?.message || err);
-                  });
+                  // Note: reinitializeClient will set reinitInProgress=true again internally,
+                  // but we set it here first to prevent race conditions with rapid errors
+                  (async () => {
+                    try {
+                      // Wait a bit to avoid reinitializing in the middle of message processing
+                      await new Promise(resolve => setTimeout(resolve, 100));
+                      
+                      // Reset flag temporarily so reinitializeClient can proceed
+                      reinitInProgress = false;
+                      
+                      await reinitializeClient(
+                        'bad-mac-error-message-handler',
+                        reason,
+                        { clearAuthSessionOverride: true }
+                      );
+                      
+                      // Reset counters after successful reinitialization
+                      consecutiveMacErrors = 0;
+                      lastMacErrorTime = 0;
+                    } catch (err) {
+                      console.error('[BAILEYS] Failed to reinitialize after Bad MAC:', err?.message || err);
+                      // Reset counters even on failure to allow retry later
+                      consecutiveMacErrors = 0;
+                      lastMacErrorTime = 0;
+                    } finally {
+                      // Ensure flag is cleared (reinitializeClient will have already set it to false)
+                      // This is a safety net in case something unexpected happens
+                      if (reinitInProgress) {
+                        console.warn('[BAILEYS] Clearing stuck reinitInProgress flag');
+                        reinitInProgress = false;
+                      }
+                    }
+                  })();
                 }
               } else {
                 // Log other errors but don't trigger recovery
