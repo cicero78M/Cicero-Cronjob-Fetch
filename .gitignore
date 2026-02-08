@@ -140,3 +140,5 @@ node_modules/
 .env
 .env.example
 .wwebjs_auth/
+.cicero/baileys_auth/
+.cicero/wwebjs_auth/
