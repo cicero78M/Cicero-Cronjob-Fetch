@@ -6,6 +6,7 @@
  */
 
 import dotenv from 'dotenv';
+import qrcode from 'qrcode-terminal';
 import { createBaileysClient } from './baileysAdapter.js';
 import { getAdminWhatsAppList } from '../utils/waHelper.js';
 
@@ -53,7 +54,7 @@ async function initializeWhatsAppLogClient() {
 
     waLogClient.on('qr', (qr) => {
       console.log('[WA LOG] QR Code received. Scan with WhatsApp:');
-      // QR code will be displayed by baileysAdapter
+      qrcode.generate(qr, { small: true });
     });
 
     waLogClient.on('authenticated', () => {
