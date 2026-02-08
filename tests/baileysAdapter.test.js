@@ -297,7 +297,7 @@ test('baileys adapter handles Bad MAC errors', async () => {
         lastDisconnect: {
           error: {
             message: 'Bad MAC Error: Bad MAC',
-            stack: 'at verifyMAC (/path/to/crypto.js:87:15)',
+            stack: 'Error: Bad MAC\n    at verifyMAC\n    at doDecryptWhisperMessage',
             output: { statusCode: 428 }
           }
         }
@@ -319,7 +319,7 @@ test('baileys adapter handles Bad MAC errors', async () => {
         lastDisconnect: {
           error: {
             message: 'Error: Bad MAC',
-            stack: 'at Object.verifyMAC (/path/to/crypto.js:87:15)',
+            stack: 'Error: Bad MAC\n    at Object.verifyMAC\n    at SessionCipher',
             output: { statusCode: 428 }
           }
         }

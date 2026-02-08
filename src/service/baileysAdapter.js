@@ -149,11 +149,9 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             const errorMessage = error?.message || String(error);
             const errorStack = error?.stack || '';
             
-            // Detect Bad MAC errors from libsignal
+            // Detect Bad MAC errors from libsignal - be specific to avoid false positives
             const isBadMacError = errorMessage.includes('Bad MAC') || 
-                                 errorStack.includes('Bad MAC') ||
-                                 errorMessage.includes('verifyMAC') ||
-                                 errorStack.includes('crypto.js');
+                                 errorStack.includes('Bad MAC');
             
             if (isBadMacError) {
               consecutiveMacErrors++;
@@ -163,20 +161,20 @@ export async function createBaileysClient(clientId = 'wa-admin') {
               );
               
               // After multiple consecutive MAC errors, reinitialize with session clear
-              if (consecutiveMacErrors >= MAX_CONSECUTIVE_MAC_ERRORS) {
+              if (consecutiveMacErrors >= MAX_CONSECUTIVE_MAC_ERRORS && !reinitInProgress) {
                 console.warn(
                   `[BAILEYS] Too many consecutive Bad MAC errors (${consecutiveMacErrors}), reinitializing with session clear`
                 );
-                consecutiveMacErrors = 0; // Reset counter
                 
-                // Reinitialize with session clear
-                if (!reinitInProgress) {
-                  await reinitializeClient(
-                    'bad-mac-error',
-                    `${MAX_CONSECUTIVE_MAC_ERRORS} consecutive MAC failures`,
-                    { clearAuthSessionOverride: true }
-                  );
-                }
+                // Reinitialize with session clear, reset counter after successful trigger
+                await reinitializeClient(
+                  'bad-mac-error',
+                  `${MAX_CONSECUTIVE_MAC_ERRORS} consecutive MAC failures`,
+                  { clearAuthSessionOverride: true }
+                );
+                
+                // Reset counter only after reinit is triggered
+                consecutiveMacErrors = 0;
               }
             }
           }
