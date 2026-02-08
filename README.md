@@ -9,7 +9,7 @@ This service runs scheduled cron jobs to:
 - Fetch TikTok posts and comments
 - Store all data in PostgreSQL database
 - Send task notifications via WhatsApp Gateway
-- Send system logs and errors via Telegram
+- Send system logs and errors via WhatsApp to admin numbers
 
 ## Features
 
@@ -20,7 +20,7 @@ This service runs scheduled cron jobs to:
 - **Client Management**: Supports multiple social media accounts
 - **Error Handling**: Robust error logging and recovery
 - **WhatsApp Notifications**: Social media task notifications via WA Gateway
-- **Telegram Logging**: System logs and errors sent to Telegram
+- **WhatsApp Logging**: System logs and errors sent to admin WhatsApp numbers
 
 ## Requirements
 
@@ -28,8 +28,7 @@ This service runs scheduled cron jobs to:
 - PostgreSQL database
 - RapidAPI keys for Instagram and TikTok APIs
 - Redis (for caching)
-- Telegram Bot Token (for system logs)
-- WhatsApp Gateway using Baileys (for task notifications)
+- WhatsApp using Baileys (for both task notifications and system logs)
 
 ## Installation
 
@@ -48,9 +47,8 @@ DATABASE_URL=postgresql://user:password@localhost:5432/cicero
 # Redis
 REDIS_URL=redis://localhost:6379
 
-# Telegram Bot (for system logs and errors)
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
-TELEGRAM_CHAT_ID=your_telegram_chat_id_here
+# WhatsApp Admin (for system logs and errors)
+ADMIN_WHATSAPP=628xxxxxx,628yyyyyy
 
 # WhatsApp Gateway (for social media task notifications)
 GATEWAY_WHATSAPP_ADMIN=628xxxxxx,628yyyyyy
@@ -65,12 +63,13 @@ RAPIDAPI_TIKTOK_HOST=tiktok-api23.p.rapidapi.com
 NODE_ENV=production
 ```
 
-### Setting up Telegram Bot
+### Setting up WhatsApp for Logs
 
-1. Create a bot using [@BotFather](https://t.me/botfather) on Telegram
-2. Get your bot token from BotFather
-3. Get your chat ID by messaging your bot and visiting: `https://api.telegram.org/bot<YourBOTToken>/getUpdates`
-4. Add these values to your `.env` file
+1. Ensure you have WhatsApp installed on your phone
+2. Add admin WhatsApp numbers to `ADMIN_WHATSAPP` in `.env` (comma-separated, format: 628xxxxxx)
+3. On first run, the system will display a QR code for the log client
+4. Scan the QR code with WhatsApp to authenticate
+5. System logs, errors, and cron reports will be sent to the admin numbers
 
 ## Usage
 

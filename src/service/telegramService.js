@@ -1,58 +1,125 @@
 // src/service/telegramService.js
 /**
- * Telegram Bot Service
- * Handles sending log messages and system notifications via Telegram
- * This replaces the old WA Bot log message functionality
+ * WhatsApp Log Service (migrated from Telegram)
+ * Handles sending log messages and system notifications via WhatsApp using Baileys
+ * This replaces the old Telegram log message functionality
  */
 
-import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
+import { createBaileysClient } from './baileysAdapter.js';
+import { getAdminWhatsAppList } from '../utils/waHelper.js';
 
 dotenv.config();
 
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
-const TELEGRAM_ENABLED = Boolean(TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID);
 const MAX_STACK_TRACE_LENGTH = 500;
+const LOG_CLIENT_ID = 'wa-log-admin';
 
-let telegramBot = null;
-let botNotConfiguredWarningShown = false;
+// Get admin WhatsApp numbers from environment
+const ADMIN_WHATSAPP = process.env.ADMIN_WHATSAPP || '';
+const LOG_ENABLED = Boolean(ADMIN_WHATSAPP);
+
+let waLogClient = null;
+let isLogClientReady = false;
+let logNotConfiguredWarningShown = false;
 
 /**
- * Log "Bot not configured" warning only once
+ * Log "Log client not configured" warning only once
  * @param {string} context - Context identifier (LOG, ERROR, CRON REPORT)
  */
 function logConfigWarningOnce(context) {
-  if (!botNotConfiguredWarningShown) {
-    console.warn(`[TELEGRAM ${context}] Skipping Telegram send: Bot not configured`);
-    botNotConfiguredWarningShown = true;
+  if (!logNotConfiguredWarningShown) {
+    console.warn(`[WA LOG ${context}] Skipping WhatsApp log send: ADMIN_WHATSAPP not configured`);
+    logNotConfiguredWarningShown = true;
   }
 }
 
 /**
- * Initialize Telegram bot
+ * Initialize WhatsApp log client
  */
-function initializeTelegramBot() {
-  if (!TELEGRAM_ENABLED) {
-    console.warn('[TELEGRAM] Bot disabled: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not configured');
+async function initializeWhatsAppLogClient() {
+  if (!LOG_ENABLED) {
+    console.warn('[WA LOG] Log client disabled: ADMIN_WHATSAPP not configured');
     return null;
   }
 
   try {
-    telegramBot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: false });
-    console.log('[TELEGRAM] Bot initialized successfully');
-    return telegramBot;
+    waLogClient = await createBaileysClient(LOG_CLIENT_ID);
+    
+    // Register event handlers
+    waLogClient.on('ready', () => {
+      isLogClientReady = true;
+      console.log('[WA LOG] Client is ready');
+    });
+
+    waLogClient.on('qr', (qr) => {
+      console.log('[WA LOG] QR Code received. Scan with WhatsApp:');
+      // QR code will be displayed by baileysAdapter
+    });
+
+    waLogClient.on('authenticated', () => {
+      console.log('[WA LOG] Client authenticated');
+    });
+
+    waLogClient.on('auth_failure', (msg) => {
+      console.error('[WA LOG] Authentication failed:', msg);
+    });
+
+    waLogClient.on('disconnected', (reason) => {
+      console.warn('[WA LOG] Client disconnected:', reason);
+      isLogClientReady = false;
+    });
+
+    // Connect the client
+    console.log(`[WA LOG] Connecting client: ${LOG_CLIENT_ID}`);
+    await waLogClient.connect();
+    console.log(`[WA LOG] Connection initiated for: ${LOG_CLIENT_ID}`);
+    
+    return waLogClient;
   } catch (error) {
-    console.error('[TELEGRAM] Failed to initialize bot:', error.message);
+    console.error('[WA LOG] Failed to initialize client:', error.message);
     return null;
   }
 }
 
-// Initialize bot on module load
-telegramBot = initializeTelegramBot();
+// Initialize log client on module load
+const initPromise = initializeWhatsAppLogClient();
 
 /**
- * Send a text message to Telegram
+ * Wait for log client to be ready
+ * @param {number} timeout - Maximum time to wait in milliseconds
+ * @returns {Promise<boolean>} True if ready, false if timeout
+ */
+async function waitForLogClientReady(timeout = 30000) {
+  // Wait for initialization to complete first
+  if (!waLogClient) {
+    await initPromise;
+  }
+  
+  if (isLogClientReady) {
+    return true;
+  }
+
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      console.warn('[WA LOG] Timeout waiting for ready state');
+      resolve(false);
+    }, timeout);
+
+    if (waLogClient) {
+      waLogClient.once('ready', () => {
+        clearTimeout(timer);
+        isLogClientReady = true;
+        resolve(true);
+      });
+    } else {
+      clearTimeout(timer);
+      resolve(false);
+    }
+  });
+}
+
+/**
+ * Send a text message to WhatsApp admin numbers
  * @param {string} message - The message to send
  * @param {object} options - Additional options (optional)
  * @returns {Promise<boolean>} Success status
@@ -60,38 +127,69 @@ telegramBot = initializeTelegramBot();
 export async function sendTelegramMessage(message, options = {}) {
   // Always log to server console first
   if (message && typeof message === 'string') {
-    console.log(`[TELEGRAM] Attempting to send: ${message.substring(0, 200)}${message.length > 200 ? '...' : ''}`);
+    console.log(`[WA LOG] Attempting to send: ${message.substring(0, 200)}${message.length > 200 ? '...' : ''}`);
   } else {
-    console.log(`[TELEGRAM] Attempting to send: [invalid message]`);
+    console.log(`[WA LOG] Attempting to send: [invalid message]`);
   }
 
-  if (!TELEGRAM_ENABLED) {
-    console.warn('[TELEGRAM] Message not sent: Bot not configured (check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)');
+  if (!LOG_ENABLED) {
+    console.warn('[WA LOG] Message not sent: ADMIN_WHATSAPP not configured');
     return false;
   }
 
   if (!message || typeof message !== 'string') {
-    console.warn('[TELEGRAM] Invalid message: Message must be a non-empty string');
+    console.warn('[WA LOG] Invalid message: Message must be a non-empty string');
     return false;
   }
 
-  try {
-    const messageOptions = {
-      parse_mode: 'Markdown',
-      ...options
-    };
+  // Ensure client is ready
+  if (!waLogClient) {
+    await initPromise;
+  }
+  
+  if (!isLogClientReady) {
+    const ready = await waitForLogClientReady();
+    if (!ready) {
+      console.error('[WA LOG] Client not ready, cannot send message');
+      return false;
+    }
+  }
 
-    await telegramBot.sendMessage(TELEGRAM_CHAT_ID, message, messageOptions);
-    console.log(`[TELEGRAM] ✅ Message sent successfully to Telegram`);
-    return true;
+  try {
+    // Get admin WhatsApp numbers
+    const adminNumbers = getAdminWhatsAppList();
+    
+    if (adminNumbers.length === 0) {
+      console.warn('[WA LOG] No valid admin WhatsApp numbers found');
+      return false;
+    }
+
+    // Send to all admin numbers
+    let successCount = 0;
+    for (const adminId of adminNumbers) {
+      try {
+        await waLogClient.sendMessage(adminId, message);
+        successCount++;
+      } catch (error) {
+        console.error(`[WA LOG] Failed to send to ${adminId}:`, error.message);
+      }
+    }
+
+    if (successCount > 0) {
+      console.log(`[WA LOG] ✅ Message sent successfully to ${successCount} admin(s)`);
+      return true;
+    } else {
+      console.error('[WA LOG] ❌ Failed to send message to any admin');
+      return false;
+    }
   } catch (error) {
-    console.error('[TELEGRAM] ❌ Failed to send message to Telegram:', error.message);
+    console.error('[WA LOG] ❌ Failed to send message:', error.message);
     return false;
   }
 }
 
 /**
- * Send a log message to Telegram
+ * Send a log message to WhatsApp
  * Formats the message with timestamp and severity
  * @param {string} level - Log level (INFO, WARN, ERROR)
  * @param {string} message - The log message
@@ -111,9 +209,9 @@ export async function sendTelegramLog(level, message) {
   const formattedMessage = `${emoji} *${level}* [${timestamp}]\n${message}`;
 
   // Always log to server console
-  console.log(`[TELEGRAM LOG] ${level}: ${message}`);
+  console.log(`[WA LOG] ${level}: ${message}`);
 
-  if (!TELEGRAM_ENABLED) {
+  if (!LOG_ENABLED) {
     logConfigWarningOnce('LOG');
     return false;
   }
@@ -122,7 +220,7 @@ export async function sendTelegramLog(level, message) {
 }
 
 /**
- * Send error notification to Telegram
+ * Send error notification to WhatsApp
  * @param {string} context - Context of the error
  * @param {Error} error - Error object
  * @returns {Promise<boolean>} Success status
@@ -133,12 +231,12 @@ export async function sendTelegramError(context, error) {
   const message = `❌ *ERROR in ${context}*\n${errorMessage}${truncatedStack ? `\n\`\`\`\n${truncatedStack}\n\`\`\`` : ''}`;
 
   // Always log to server console
-  console.error(`[TELEGRAM ERROR] ${context}: ${errorMessage}`);
+  console.error(`[WA LOG ERROR] ${context}: ${errorMessage}`);
   if (truncatedStack) {
-    console.error(`[TELEGRAM ERROR] Stack trace: ${truncatedStack}`);
+    console.error(`[WA LOG ERROR] Stack trace: ${truncatedStack}`);
   }
 
-  if (!TELEGRAM_ENABLED) {
+  if (!LOG_ENABLED) {
     logConfigWarningOnce('ERROR');
     return false;
   }
@@ -147,7 +245,7 @@ export async function sendTelegramError(context, error) {
 }
 
 /**
- * Send cron job report to Telegram
+ * Send cron job report to WhatsApp
  * @param {string} jobName - Name of the cron job
  * @param {object} report - Report data
  * @returns {Promise<boolean>} Success status
@@ -176,11 +274,11 @@ export async function sendTelegramCronReport(jobName, report) {
   const reportText = lines.join('\n');
 
   // Always log to server console - truncate if too long
-  console.log(`[TELEGRAM CRON REPORT] ${jobName}`);
+  console.log(`[WA LOG CRON REPORT] ${jobName}`);
   const reportSummary = reportText.length > 500 ? reportText.substring(0, 500) + '...' : reportText;
-  console.log(`[TELEGRAM CRON REPORT] ${reportSummary}`);
+  console.log(`[WA LOG CRON REPORT] ${reportSummary}`);
 
-  if (!TELEGRAM_ENABLED) {
+  if (!LOG_ENABLED) {
     logConfigWarningOnce('CRON REPORT');
     return false;
   }
@@ -189,19 +287,19 @@ export async function sendTelegramCronReport(jobName, report) {
 }
 
 /**
- * Check if Telegram is enabled and configured
- * @returns {boolean} True if Telegram is enabled
+ * Check if WhatsApp log is enabled and configured
+ * @returns {boolean} True if WhatsApp log is enabled
  */
 export function isTelegramEnabled() {
-  return TELEGRAM_ENABLED;
+  return LOG_ENABLED;
 }
 
 /**
- * Get Telegram bot instance (for advanced usage)
- * @returns {TelegramBot|null} Bot instance or null
+ * Get WhatsApp log client instance (for advanced usage)
+ * @returns {object|null} Client instance or null
  */
 export function getTelegramBot() {
-  return telegramBot;
+  return waLogClient;
 }
 
 export default {
