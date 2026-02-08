@@ -422,3 +422,58 @@ test('baileys adapter resets MAC error counter on successful connection', async 
   
   consoleErrorSpy.mockRestore();
 });
+
+test('baileys adapter reinitializes with cleared session on LOGGED_OUT', async () => {
+  const client = await createBaileysClient('test-client');
+  activeClients.push(client);
+  
+  const qrHandler = jest.fn();
+  client.on('qr', qrHandler);
+  
+  await client.connect();
+  
+  const consoleLogSpy = jest.spyOn(console, 'log').mockImplementation();
+  const consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation();
+  
+  // Simulate LOGGED_OUT disconnect (statusCode: 401)
+  // We need to ensure the handlers are called and awaited properly
+  const handlerPromises = [];
+  if (mockSocketEvents['connection.update']) {
+    for (const handler of mockSocketEvents['connection.update']) {
+      const result = handler({ 
+        connection: 'close',
+        lastDisconnect: {
+          error: {
+            output: { statusCode: 401 } // DisconnectReason.loggedOut
+          }
+        }
+      });
+      // If handler returns a promise, wait for it
+      if (result && typeof result.then === 'function') {
+        handlerPromises.push(result);
+      }
+    }
+  }
+  
+  // Wait for all async operations from handlers
+  await Promise.all(handlerPromises);
+  
+  // Should log that it's reinitializing after logout
+  expect(consoleLogSpy).toHaveBeenCalledWith(
+    expect.stringContaining('[BAILEYS] Logged out detected, reinitializing with cleared session...')
+  );
+  
+  // Should reinitialize with session clear
+  expect(consoleWarnSpy).toHaveBeenCalledWith(
+    expect.stringContaining('[BAILEYS] Reinitializing clientId=test-client after logged-out (User logged out) (clear session)')
+  );
+  
+  // Should clear the auth session (this appears in a different console.warn call with "at" appended)
+  const clearedSessionCall = consoleWarnSpy.mock.calls.find(
+    call => call[0] && call[0].includes('[BAILEYS] Cleared auth session for clientId=test-client')
+  );
+  expect(clearedSessionCall).toBeDefined();
+  
+  consoleLogSpy.mockRestore();
+  consoleWarnSpy.mockRestore();
+});
