@@ -279,3 +279,146 @@ test('baileys adapter gets client state', async () => {
   state = await client.getState();
   expect(state).toBe('CONNECTED');
 });
+
+test('baileys adapter handles Bad MAC errors', async () => {
+  const client = await createBaileysClient('test-client');
+  activeClients.push(client);
+  await client.connect();
+  
+  // Spy on console methods to verify error logging
+  const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+  const consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation();
+  
+  // Simulate first Bad MAC error
+  if (mockSocketEvents['connection.update']) {
+    mockSocketEvents['connection.update'].forEach(handler => 
+      handler({ 
+        connection: 'close',
+        lastDisconnect: {
+          error: {
+            message: 'Bad MAC Error: Bad MAC',
+            stack: 'Error: Bad MAC\n    at verifyMAC\n    at doDecryptWhisperMessage',
+            output: { statusCode: 428 }
+          }
+        }
+      })
+    );
+  }
+  
+  // First MAC error should be logged but not trigger reinit
+  expect(consoleErrorSpy).toHaveBeenCalledWith(
+    expect.stringContaining('[BAILEYS] Bad MAC error detected (1/3)'),
+    expect.stringContaining('Bad MAC')
+  );
+  
+  // Simulate second Bad MAC error
+  if (mockSocketEvents['connection.update']) {
+    mockSocketEvents['connection.update'].forEach(handler => 
+      handler({ 
+        connection: 'close',
+        lastDisconnect: {
+          error: {
+            message: 'Error: Bad MAC',
+            stack: 'Error: Bad MAC\n    at Object.verifyMAC\n    at SessionCipher',
+            output: { statusCode: 428 }
+          }
+        }
+      })
+    );
+  }
+  
+  // Second MAC error should increment counter
+  expect(consoleErrorSpy).toHaveBeenCalledWith(
+    expect.stringContaining('[BAILEYS] Bad MAC error detected (2/3)'),
+    expect.stringContaining('Bad MAC')
+  );
+  
+  // Simulate third Bad MAC error
+  if (mockSocketEvents['connection.update']) {
+    mockSocketEvents['connection.update'].forEach(handler => 
+      handler({ 
+        connection: 'close',
+        lastDisconnect: {
+          error: {
+            message: 'Bad MAC Error: Bad MAC',
+            output: { statusCode: 428 }
+          }
+        }
+      })
+    );
+  }
+  
+  // Third MAC error should trigger warning about reinit
+  expect(consoleErrorSpy).toHaveBeenCalledWith(
+    expect.stringContaining('[BAILEYS] Bad MAC error detected (3/3)'),
+    expect.anything()
+  );
+  expect(consoleWarnSpy).toHaveBeenCalledWith(
+    expect.stringContaining('[BAILEYS] Too many consecutive Bad MAC errors (3)'),
+  );
+  
+  // Cleanup
+  consoleErrorSpy.mockRestore();
+  consoleWarnSpy.mockRestore();
+});
+
+test('baileys adapter resets MAC error counter on successful connection', async () => {
+  const client = await createBaileysClient('test-client');
+  activeClients.push(client);
+  await client.connect();
+  
+  const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+  
+  // Simulate first Bad MAC error
+  if (mockSocketEvents['connection.update']) {
+    mockSocketEvents['connection.update'].forEach(handler => 
+      handler({ 
+        connection: 'close',
+        lastDisconnect: {
+          error: {
+            message: 'Bad MAC Error: Bad MAC',
+            output: { statusCode: 428 }
+          }
+        }
+      })
+    );
+  }
+  
+  expect(consoleErrorSpy).toHaveBeenCalledWith(
+    expect.stringContaining('[BAILEYS] Bad MAC error detected (1/3)'),
+    expect.anything()
+  );
+  
+  // Simulate successful connection (should reset counter)
+  if (mockSocketEvents['connection.update']) {
+    mockSocketEvents['connection.update'].forEach(handler => 
+      handler({ connection: 'open' })
+    );
+  }
+  
+  // Simulate another Bad MAC error (should start from 1 again)
+  if (mockSocketEvents['connection.update']) {
+    mockSocketEvents['connection.update'].forEach(handler => 
+      handler({ 
+        connection: 'close',
+        lastDisconnect: {
+          error: {
+            message: 'Bad MAC Error: Bad MAC',
+            output: { statusCode: 428 }
+          }
+        }
+      })
+    );
+  }
+  
+  // Counter should have reset, so this should be (1/3) not (2/3)
+  const errorCalls = consoleErrorSpy.mock.calls.filter(
+    call => call[0] && call[0].includes('[BAILEYS] Bad MAC error detected')
+  );
+  
+  // Should have two calls: first at (1/3), second at (1/3) after reset
+  expect(errorCalls.length).toBe(2);
+  expect(errorCalls[1][0]).toContain('(1/3)');
+  
+  consoleErrorSpy.mockRestore();
+});

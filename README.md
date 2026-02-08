@@ -124,6 +124,14 @@ src/
 - `npm run lint` - Run ESLint
 - `npm run format` - Format code with Prettier
 
+## Documentation
+
+For detailed documentation, see the `docs/` directory:
+
+- [Bad MAC Error Handling](docs/bad_mac_error_handling.md) - Automatic recovery from WhatsApp session errors
+- [Baileys Migration Guide](docs/baileys_migration_guide.md) - WhatsApp library migration details
+- [WhatsApp Troubleshooting](docs/wa_troubleshooting.md) - Common WhatsApp issues and solutions
+
 ## License
 
 MIT
