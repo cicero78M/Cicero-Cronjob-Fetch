@@ -242,30 +242,124 @@ export async function createBaileysClient(clientId = 'wa-admin') {
           if (type !== 'notify') return;
 
           for (const msg of messages) {
-            if (!msg.message) continue;
+            try {
+              if (!msg.message) continue;
 
-            // Transform message to match wwebjs format for compatibility
-            const transformedMessage = {
-              from: msg.key.remoteJid,
-              body: getMessageText(msg),
-              id: {
-                id: msg.key.id,
-                _serialized: msg.key.id,
-              },
-              timestamp: msg.messageTimestamp,
-              hasMedia: hasMedia(msg),
-              isGroupMsg: msg.key.remoteJid?.endsWith('@g.us') || false,
-              author: msg.key.participant || msg.key.remoteJid,
-            };
+              // Transform message to match wwebjs format for compatibility
+              const transformedMessage = {
+                from: msg.key.remoteJid,
+                body: getMessageText(msg),
+                id: {
+                  id: msg.key.id,
+                  _serialized: msg.key.id,
+                },
+                timestamp: msg.messageTimestamp,
+                hasMedia: hasMedia(msg),
+                isGroupMsg: msg.key.remoteJid?.endsWith('@g.us') || false,
+                author: msg.key.participant || msg.key.remoteJid,
+              };
 
-            if (debugLoggingEnabled) {
-              console.log('[BAILEYS] Message received:', {
-                from: transformedMessage.from,
-                hasBody: !!transformedMessage.body,
-              });
+              if (debugLoggingEnabled) {
+                console.log('[BAILEYS] Message received:', {
+                  from: transformedMessage.from,
+                  hasBody: !!transformedMessage.body,
+                });
+              }
+
+              emitter.emit('message', transformedMessage);
+            } catch (error) {
+              // Catch any errors during message processing (including decryption errors)
+              const errorMessage = error?.message || String(error);
+              const errorStack = error?.stack || '';
+              
+              // Check if this is a Bad MAC error during message decryption
+              const isBadMacError = errorMessage.includes('Bad MAC') || 
+                                   errorStack.includes('Bad MAC');
+              
+              if (isBadMacError) {
+                console.error(
+                  '[BAILEYS] Bad MAC error during message decryption:',
+                  errorMessage
+                );
+                
+                // Increment counter for errors during message processing
+                const now = Date.now();
+                const previousErrorTime = lastMacErrorTime;
+                const isRapidError = previousErrorTime > 0 && (now - previousErrorTime) < MAC_ERROR_RAPID_THRESHOLD;
+                const timeSinceLastError = previousErrorTime > 0 ? now - previousErrorTime : 0;
+                
+                // Reset counter if too much time has passed
+                if (previousErrorTime > 0 && timeSinceLastError > MAC_ERROR_RESET_TIMEOUT) {
+                  consecutiveMacErrors = 0;
+                }
+                
+                consecutiveMacErrors++;
+                lastMacErrorTime = now;
+                
+                console.error(
+                  `[BAILEYS] Bad MAC error in message handler (${consecutiveMacErrors}/${MAX_CONSECUTIVE_MAC_ERRORS})${isRapidError ? ' [RAPID]' : ''}`,
+                  `from ${msg.key.remoteJid || 'unknown'}`
+                );
+                
+                // Trigger recovery if threshold reached
+                const shouldRecover = consecutiveMacErrors >= MAX_CONSECUTIVE_MAC_ERRORS || 
+                                     (isRapidError && consecutiveMacErrors >= 1);
+                
+                if (shouldRecover && !reinitInProgress) {
+                  // Set flag immediately to prevent race conditions
+                  reinitInProgress = true;
+                  
+                  const reason = isRapidError 
+                    ? `Rapid Bad MAC errors during message decryption (${Math.round(timeSinceLastError/1000)}s between errors)`
+                    : `${MAX_CONSECUTIVE_MAC_ERRORS} consecutive MAC failures during message processing`;
+                  
+                  console.warn(
+                    `[BAILEYS] Too many Bad MAC errors in message handler, reinitializing (reason: ${reason})`
+                  );
+                  
+                  // Trigger reinitialization asynchronously to not block message processing
+                  // Note: reinitializeClient will set reinitInProgress=true again internally,
+                  // but we set it here first to prevent race conditions with rapid errors
+                  (async () => {
+                    try {
+                      // Wait a bit to avoid reinitializing in the middle of message processing
+                      await new Promise(resolve => setTimeout(resolve, 100));
+                      
+                      // Reset flag temporarily so reinitializeClient can proceed
+                      reinitInProgress = false;
+                      
+                      await reinitializeClient(
+                        'bad-mac-error-message-handler',
+                        reason,
+                        { clearAuthSessionOverride: true }
+                      );
+                      
+                      // Reset counters after successful reinitialization
+                      consecutiveMacErrors = 0;
+                      lastMacErrorTime = 0;
+                    } catch (err) {
+                      console.error('[BAILEYS] Failed to reinitialize after Bad MAC:', err?.message || err);
+                      // Reset counters even on failure to allow retry later
+                      consecutiveMacErrors = 0;
+                      lastMacErrorTime = 0;
+                    } finally {
+                      // Ensure flag is cleared (reinitializeClient will have already set it to false)
+                      // This is a safety net in case something unexpected happens
+                      if (reinitInProgress) {
+                        console.warn('[BAILEYS] Clearing stuck reinitInProgress flag');
+                        reinitInProgress = false;
+                      }
+                    }
+                  })();
+                }
+              } else {
+                // Log other errors but don't trigger recovery
+                console.error(
+                  '[BAILEYS] Error processing message:',
+                  errorMessage
+                );
+              }
             }
-
-            emitter.emit('message', transformedMessage);
           }
         });
 
