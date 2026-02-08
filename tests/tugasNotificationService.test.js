@@ -12,19 +12,19 @@ jest.unstable_mockModule('../src/utils/waHelper.js', () => ({
 }));
 
 jest.unstable_mockModule('../src/model/instaPostModel.js', () => ({
-  findByClientId: jest.fn(),
+  getPostsTodayByClient: jest.fn(),
 }));
 
 jest.unstable_mockModule('../src/model/tiktokPostModel.js', () => ({
-  findByClientId: jest.fn(),
+  getPostsTodayByClient: jest.fn(),
 }));
 
 // Import after mocking
 const { sendTugasNotification, buildChangeSummary } = await import('../src/service/tugasNotificationService.js');
 const { findById } = await import('../src/model/clientModel.js');
 const { safeSendMessage } = await import('../src/utils/waHelper.js');
-const { findByClientId: findInstaPostsByClientId } = await import('../src/model/instaPostModel.js');
-const { findByClientId: findTiktokPostsByClientId } = await import('../src/model/tiktokPostModel.js');
+const { getPostsTodayByClient: getPostsTodayByClientInsta } = await import('../src/model/instaPostModel.js');
+const { getPostsTodayByClient: getPostsTodayByClientTiktok } = await import('../src/model/tiktokPostModel.js');
 
 describe('tugasNotificationService', () => {
   beforeEach(() => {
@@ -206,8 +206,8 @@ describe('tugasNotificationService', () => {
       findById.mockResolvedValue(mockClient);
       safeSendMessage.mockResolvedValue(true);
       // Mock post fetching functions to return empty arrays by default
-      findInstaPostsByClientId.mockResolvedValue([]);
-      findTiktokPostsByClientId.mockResolvedValue([]);
+      getPostsTodayByClientInsta.mockResolvedValue([]);
+      getPostsTodayByClientTiktok.mockResolvedValue([]);
     });
 
     it('should send scheduled notification with task counts', async () => {
@@ -292,13 +292,13 @@ describe('tugasNotificationService', () => {
 
     it('should include Instagram and TikTok links grouped by platform in scheduled notification', async () => {
       // Mock Instagram posts
-      findInstaPostsByClientId.mockResolvedValue([
+      getPostsTodayByClientInsta.mockResolvedValue([
         { shortcode: 'abc123', caption: 'Test Instagram post 1' },
         { shortcode: 'def456', caption: 'Test Instagram post 2' }
       ]);
       
       // Mock TikTok posts
-      findTiktokPostsByClientId.mockResolvedValue([
+      getPostsTodayByClientTiktok.mockResolvedValue([
         { video_id: 'tiktok123', description: 'Test TikTok video 1', author_username: 'testuser' },
         { video_id: 'tiktok456', description: 'Test TikTok video 2', author_username: 'testuser' }
       ]);

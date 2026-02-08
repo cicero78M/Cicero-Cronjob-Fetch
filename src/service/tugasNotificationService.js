@@ -2,8 +2,8 @@
 
 import { findById as findClientById } from '../model/clientModel.js';
 import { safeSendMessage } from '../utils/waHelper.js';
-import { findByClientId as findInstaPostsByClientId } from '../model/instaPostModel.js';
-import { findByClientId as findTiktokPostsByClientId } from '../model/tiktokPostModel.js';
+import { getPostsTodayByClient as getPostsTodayByClientInsta } from '../model/instaPostModel.js';
+import { getPostsTodayByClient as getPostsTodayByClientTiktok } from '../model/tiktokPostModel.js';
 
 const LOG_TAG = 'TUGAS_NOTIFICATION';
 
@@ -196,13 +196,13 @@ function normalizeGroupId(groupId) {
 }
 
 /**
- * Get active Instagram posts for a client
+ * Get active Instagram posts for a client (today only, Jakarta timezone)
  * @param {string} clientId - Client ID
  * @returns {Promise<Array>} Array of Instagram posts
  */
 async function getActiveInstaPosts(clientId) {
   try {
-    const posts = await findInstaPostsByClientId(clientId);
+    const posts = await getPostsTodayByClientInsta(clientId);
     return posts || [];
   } catch (error) {
     console.error(`[${LOG_TAG}] Error fetching Instagram posts:`, error.message);
@@ -211,13 +211,13 @@ async function getActiveInstaPosts(clientId) {
 }
 
 /**
- * Get active TikTok posts for a client
+ * Get active TikTok posts for a client (today only, Jakarta timezone)
  * @param {string} clientId - Client ID
  * @returns {Promise<Array>} Array of TikTok posts
  */
 async function getActiveTiktokPosts(clientId) {
   try {
-    const posts = await findTiktokPostsByClientId(clientId);
+    const posts = await getPostsTodayByClientTiktok(clientId);
     return posts || [];
   } catch (error) {
     console.error(`[${LOG_TAG}] Error fetching TikTok posts:`, error.message);
