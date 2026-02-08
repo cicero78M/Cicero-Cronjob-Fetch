@@ -77,7 +77,10 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   let reinitInProgress = false;
   let reconnectTimeout = null;
   let consecutiveMacErrors = 0;
-  const MAX_CONSECUTIVE_MAC_ERRORS = 3;
+  const MAX_CONSECUTIVE_MAC_ERRORS = 2; // Reduced from 3 to 2 for faster recovery
+  let lastMacErrorTime = 0;
+  const MAC_ERROR_RESET_TIMEOUT = 60000; // Reset counter after 60 seconds without errors
+  const MAC_ERROR_RAPID_THRESHOLD = 5000; // If errors occur within 5 seconds, consider it rapid/serious
 
   // Pino logger configuration (silent unless debug is enabled)
   const logger = P({ 
@@ -138,6 +141,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
           if (connection === 'open') {
             console.log('[BAILEYS] Connection opened successfully');
             consecutiveMacErrors = 0; // Reset counter on successful connection
+            lastMacErrorTime = 0; // Reset timestamp
             emitter.emit('authenticated');
             emitter.emit('ready');
           }
@@ -180,27 +184,54 @@ export async function createBaileysClient(clientId = 'wa-admin') {
                                  errorStack.includes('Bad MAC');
             
             if (isBadMacError) {
+              const now = Date.now();
+              const previousErrorTime = lastMacErrorTime; // Store previous time before updating
+              
+              // Check if this is a rapid error (within 5 seconds of previous error)
+              const isRapidError = previousErrorTime > 0 && (now - previousErrorTime) < MAC_ERROR_RAPID_THRESHOLD;
+              const timeSinceLastError = previousErrorTime > 0 ? now - previousErrorTime : 0;
+              
+              // Reset counter if too much time has passed since last error (errors are not consecutive)
+              if (previousErrorTime > 0 && timeSinceLastError > MAC_ERROR_RESET_TIMEOUT) {
+                console.log(
+                  `[BAILEYS] Resetting Bad MAC counter due to timeout (${Math.round(timeSinceLastError/1000)}s since last error)`
+                );
+                consecutiveMacErrors = 0;
+              }
+              
               consecutiveMacErrors++;
+              lastMacErrorTime = now; // Update timestamp after storing previous value
+              
               console.error(
-                `[BAILEYS] Bad MAC error detected (${consecutiveMacErrors}/${MAX_CONSECUTIVE_MAC_ERRORS}):`,
+                `[BAILEYS] Bad MAC error detected (${consecutiveMacErrors}/${MAX_CONSECUTIVE_MAC_ERRORS})${isRapidError ? ' [RAPID]' : ''}:`,
                 errorMessage
               );
               
-              // After multiple consecutive MAC errors, reinitialize with session clear
-              if (consecutiveMacErrors >= MAX_CONSECUTIVE_MAC_ERRORS && !reinitInProgress) {
+              // Trigger recovery if:
+              // 1. We've hit the threshold for consecutive errors, OR
+              // 2. We're getting rapid errors (sign of serious corruption)
+              const shouldRecover = consecutiveMacErrors >= MAX_CONSECUTIVE_MAC_ERRORS || 
+                                   (isRapidError && consecutiveMacErrors >= 1);
+              
+              if (shouldRecover && !reinitInProgress) {
+                const reason = isRapidError 
+                  ? `Rapid Bad MAC errors (${Math.round(timeSinceLastError/1000)}s between errors)`
+                  : `${MAX_CONSECUTIVE_MAC_ERRORS} consecutive MAC failures`;
+                
                 console.warn(
-                  `[BAILEYS] Too many consecutive Bad MAC errors (${consecutiveMacErrors}), reinitializing with session clear`
+                  `[BAILEYS] Too many Bad MAC errors, reinitializing with session clear (reason: ${reason})`
                 );
                 
                 // Reinitialize with session clear, reset counter after successful trigger
                 await reinitializeClient(
                   'bad-mac-error',
-                  `${MAX_CONSECUTIVE_MAC_ERRORS} consecutive MAC failures`,
+                  reason,
                   { clearAuthSessionOverride: true }
                 );
                 
                 // Reset counter only after reinit is triggered
                 consecutiveMacErrors = 0;
+                lastMacErrorTime = 0;
               }
             }
           }
