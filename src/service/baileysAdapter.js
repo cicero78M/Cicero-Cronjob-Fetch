@@ -128,7 +128,8 @@ export async function createBaileysClient(clientId = 'wa-admin') {
           // Connection closed
           if (connection === 'close') {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+            const shouldReconnect = !isLoggedOut;
             
             console.log(
               `[BAILEYS] Connection closed (statusCode: ${statusCode}, shouldReconnect: ${shouldReconnect})`
@@ -137,7 +138,11 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             const reason = getDisconnectReason(statusCode);
             emitter.emit('disconnected', reason);
 
-            if (shouldReconnect && !reinitInProgress) {
+            // If logged out, reinitialize with cleared session to show QR code again
+            if (isLoggedOut && !reinitInProgress) {
+              console.log('[BAILEYS] Logged out detected, reinitializing with cleared session...');
+              await reinitializeClient('logged-out', 'User logged out', { clearAuthSessionOverride: true });
+            } else if (shouldReconnect && !reinitInProgress) {
               console.log('[BAILEYS] Attempting to reconnect...');
               reconnectTimeout = setTimeout(() => startConnect('auto-reconnect'), 3000);
             }
