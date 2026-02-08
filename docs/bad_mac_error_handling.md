@@ -27,9 +27,16 @@ The Baileys adapter now automatically detects and recovers from Bad MAC errors:
 
 ### Detection
 
-The adapter monitors connection errors for "Bad MAC" patterns in:
-- Error messages containing "Bad MAC"
-- Stack traces containing "Bad MAC"
+The adapter monitors for "Bad MAC" patterns in **two locations**:
+
+1. **Connection-level errors**: During connection updates and disconnections
+   - Error messages containing "Bad MAC"
+   - Stack traces containing "Bad MAC"
+
+2. **Message-level errors**: During message decryption and processing (NEW)
+   - Catches decryption failures that occur when processing incoming messages
+   - Provides earlier detection before connection-level failures
+   - Includes sender information for better diagnostics
 
 ### Recovery Process
 
@@ -79,10 +86,17 @@ When recovery is triggered, the adapter automatically clears the session by:
 
 ### Log Messages
 
-**Detection:**
+**Detection at Connection Level:**
 ```
 [BAILEYS] Bad MAC error detected (1/2): Bad MAC Error: Bad MAC
 [BAILEYS] Bad MAC error detected (2/2) [RAPID]: Bad MAC Error: Bad MAC
+```
+
+**Detection at Message Level (NEW):**
+```
+[BAILEYS] Bad MAC error during message decryption: Bad MAC Error: Bad MAC
+[BAILEYS] Bad MAC error in message handler (1/2) from 6281234567890@s.whatsapp.net
+[BAILEYS] Bad MAC error in message handler (2/2) [RAPID] from 6281234567890@s.whatsapp.net
 ```
 
 **Recovery Triggered:**
