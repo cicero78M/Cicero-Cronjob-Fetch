@@ -21,7 +21,7 @@ let isFetchInFlight = false;
 // Scheduled notification times (Jakarta time) - always send notifications at these times
 const SCHEDULED_NOTIFICATION_TIMES = [
   { hour: 6, minute: 30 },   // 06:30
-  { hour: 15, minute: 30 },   // 14:00
+  { hour: 16, minute: 15 },   // 14:00
   { hour: 16, minute: 30 },    // 17:00
   { hour: 16, minute: 45 },    // 17:00
   { hour: 17, minute: 0 }    // 17:00
