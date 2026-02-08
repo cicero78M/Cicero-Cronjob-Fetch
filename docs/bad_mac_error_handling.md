@@ -33,9 +33,10 @@ The adapter monitors connection errors for "Bad MAC" patterns in:
 
 ### Recovery Process
 
-1. **First Error**: Log the error and increment counter (1/3)
-2. **Second Error**: Log the error and increment counter (2/3)
-3. **Third Error**: Trigger automatic session recovery
+1. **First Error**: Log the error and increment counter (1/2)
+2. **Second Error**: 
+   - If within 5 seconds of first error: Trigger immediate recovery (rapid error detection)
+   - Otherwise: Trigger recovery at threshold
    - Log warning about too many consecutive errors
    - Clear the corrupted session data
    - Reinitialize the WhatsApp connection with fresh keys
@@ -46,22 +47,26 @@ The adapter monitors connection errors for "Bad MAC" patterns in:
 The error counter resets to 0 when:
 - The connection successfully opens (connection state = 'open')
 - Session recovery completes successfully
+- More than 60 seconds pass without any Bad MAC errors (timeout reset)
 
-This prevents false positives from temporary network issues.
+This prevents false positives from temporary network issues and ensures the counter only tracks truly consecutive errors.
 
 ## Configuration
 
 ### Error Threshold
 
-The default threshold is 3 consecutive Bad MAC errors. This is defined as:
+The default threshold is 2 consecutive Bad MAC errors (reduced from 3 for faster recovery). This is defined as:
 
 ```javascript
-const MAX_CONSECUTIVE_MAC_ERRORS = 3;
+const MAX_CONSECUTIVE_MAC_ERRORS = 2;
 ```
 
+Additionally, the system detects **rapid errors** (errors occurring within 5 seconds) and can trigger recovery even after just 1 error if it's part of a rapid sequence, as this indicates serious session corruption.
+
 This threshold balances between:
-- **Too low (1-2)**: May trigger unnecessary session resets from temporary issues
-- **Too high (5+)**: Takes longer to recover from genuine session corruption
+- **Too low (1)**: May trigger unnecessary session resets from single transient issues
+- **Too high (3+)**: Takes longer to recover from genuine session corruption
+- **Current (2 with rapid detection)**: Fast recovery while avoiding false positives
 
 ### Session Clear
 
@@ -76,16 +81,22 @@ When recovery is triggered, the adapter automatically clears the session by:
 
 **Detection:**
 ```
-[BAILEYS] Bad MAC error detected (1/3): Bad MAC Error: Bad MAC
-[BAILEYS] Bad MAC error detected (2/3): Bad MAC Error: Bad MAC
+[BAILEYS] Bad MAC error detected (1/2): Bad MAC Error: Bad MAC
+[BAILEYS] Bad MAC error detected (2/2) [RAPID]: Bad MAC Error: Bad MAC
 ```
 
 **Recovery Triggered:**
 ```
-[BAILEYS] Bad MAC error detected (3/3): Bad MAC Error: Bad MAC
-[BAILEYS] Too many consecutive Bad MAC errors (3), reinitializing with session clear
-[BAILEYS] Reinitializing clientId=wa-gateway after bad-mac-error (3 consecutive MAC failures) (clear session).
+[BAILEYS] Bad MAC error detected (2/2): Bad MAC Error: Bad MAC
+[BAILEYS] Too many Bad MAC errors, reinitializing with session clear (reason: 2 consecutive MAC failures)
+[BAILEYS] Reinitializing clientId=wa-gateway after bad-mac-error (2 consecutive MAC failures) (clear session).
 [BAILEYS] Cleared auth session for clientId=wa-gateway at /path/to/session.
+```
+
+Or for rapid errors:
+```
+[BAILEYS] Bad MAC error detected (1/2) [RAPID]: Bad MAC Error: Bad MAC
+[BAILEYS] Too many Bad MAC errors, reinitializing with session clear (reason: Rapid Bad MAC errors (0s between errors))
 ```
 
 **Successful Recovery:**
