@@ -167,9 +167,12 @@ export async function getPostsTodayByClient(client_id, referenceDate) {
   const normalizedId = normalizeClientId(client_id);
   const targetDate = resolveJakartaDate(referenceDate);
   const res = await query(
-    `SELECT * FROM tiktok_post WHERE LOWER(TRIM(client_id)) = $1 AND ${jakartaDateCast(
-      "created_at"
-    )}::date = $2::date ORDER BY created_at ASC, video_id ASC`,
+    `SELECT tp.*, c.client_tiktok as author_username 
+     FROM tiktok_post tp
+     LEFT JOIN clients c ON tp.client_id = c.client_id
+     WHERE LOWER(TRIM(tp.client_id)) = $1 AND ${jakartaDateCast(
+      "tp.created_at"
+    )}::date = $2::date ORDER BY tp.created_at ASC, tp.video_id ASC`,
     [normalizedId, targetDate]
   );
   return res.rows;

@@ -68,7 +68,7 @@ function formatTiktokPostAdditions(posts, clientName) {
 
   posts.forEach((post, index) => {
     const videoId = post.video_id || '';
-    const description = post.description ? truncateText(post.description, 80) : '(Tidak ada deskripsi)';
+    const description = post.caption ? truncateText(post.caption, 80) : '(Tidak ada deskripsi)';
     const link = `https://www.tiktok.com/@${post.author_username || 'user'}/video/${videoId}`;
     
     lines.push(`${index + 1}. *Video ${videoId}*`);
@@ -266,7 +266,7 @@ function formatTiktokTaskSection(posts) {
 
   posts.forEach((post, index) => {
     const videoId = post.video_id || '';
-    const description = post.description ? truncateText(post.description, 60) : '(Tidak ada deskripsi)';
+    const description = post.caption ? truncateText(post.caption, 60) : '(Tidak ada deskripsi)';
     const username = post.author_username || 'user';
     const link = `https://www.tiktok.com/@${username}/video/${videoId}`;
     
