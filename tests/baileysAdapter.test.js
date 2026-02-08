@@ -436,23 +436,27 @@ test('baileys adapter reinitializes with cleared session on LOGGED_OUT', async (
   const consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation();
   
   // Simulate LOGGED_OUT disconnect (statusCode: 401)
+  // We need to ensure the handlers are called and awaited properly
+  const handlerPromises = [];
   if (mockSocketEvents['connection.update']) {
-    await Promise.all(
-      mockSocketEvents['connection.update'].map(async handler => 
-        handler({ 
-          connection: 'close',
-          lastDisconnect: {
-            error: {
-              output: { statusCode: 401 } // DisconnectReason.loggedOut
-            }
+    for (const handler of mockSocketEvents['connection.update']) {
+      const result = handler({ 
+        connection: 'close',
+        lastDisconnect: {
+          error: {
+            output: { statusCode: 401 } // DisconnectReason.loggedOut
           }
-        })
-      )
-    );
+        }
+      });
+      // If handler returns a promise, wait for it
+      if (result && typeof result.then === 'function') {
+        handlerPromises.push(result);
+      }
+    }
   }
   
-  // Wait a bit for async operations to complete
-  await new Promise(resolve => setTimeout(resolve, 100));
+  // Wait for all async operations from handlers
+  await Promise.all(handlerPromises);
   
   // Should log that it's reinitializing after logout
   expect(consoleLogSpy).toHaveBeenCalledWith(

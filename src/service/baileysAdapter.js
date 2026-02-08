@@ -141,7 +141,11 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             // If logged out, reinitialize with cleared session to show QR code again
             if (isLoggedOut && !reinitInProgress) {
               console.log('[BAILEYS] Logged out detected, reinitializing with cleared session...');
-              await reinitializeClient('logged-out', 'User logged out', { clearAuthSessionOverride: true });
+              try {
+                await reinitializeClient('logged-out', 'User logged out', { clearAuthSessionOverride: true });
+              } catch (err) {
+                console.error('[BAILEYS] Failed to reinitialize after logout:', err?.message || err);
+              }
             } else if (shouldReconnect && !reinitInProgress) {
               console.log('[BAILEYS] Attempting to reconnect...');
               reconnectTimeout = setTimeout(() => startConnect('auto-reconnect'), 3000);
