@@ -11,10 +11,20 @@ jest.unstable_mockModule('../src/utils/waHelper.js', () => ({
   safeSendMessage: jest.fn(),
 }));
 
+jest.unstable_mockModule('../src/model/instaPostModel.js', () => ({
+  findByClientId: jest.fn(),
+}));
+
+jest.unstable_mockModule('../src/model/tiktokPostModel.js', () => ({
+  findByClientId: jest.fn(),
+}));
+
 // Import after mocking
 const { sendTugasNotification, buildChangeSummary } = await import('../src/service/tugasNotificationService.js');
 const { findById } = await import('../src/model/clientModel.js');
 const { safeSendMessage } = await import('../src/utils/waHelper.js');
+const { findByClientId: findInstaPostsByClientId } = await import('../src/model/instaPostModel.js');
+const { findByClientId: findTiktokPostsByClientId } = await import('../src/model/tiktokPostModel.js');
 
 describe('tugasNotificationService', () => {
   beforeEach(() => {
@@ -195,6 +205,9 @@ describe('tugasNotificationService', () => {
     beforeEach(() => {
       findById.mockResolvedValue(mockClient);
       safeSendMessage.mockResolvedValue(true);
+      // Mock post fetching functions to return empty arrays by default
+      findInstaPostsByClientId.mockResolvedValue([]);
+      findTiktokPostsByClientId.mockResolvedValue([]);
     });
 
     it('should send scheduled notification with task counts', async () => {
@@ -275,6 +288,70 @@ describe('tugasNotificationService', () => {
 
       expect(result).toBe(false);
       expect(safeSendMessage).not.toHaveBeenCalled();
+    });
+
+    it('should include Instagram and TikTok links grouped by platform in scheduled notification', async () => {
+      // Mock Instagram posts
+      findInstaPostsByClientId.mockResolvedValue([
+        { shortcode: 'abc123', caption: 'Test Instagram post 1' },
+        { shortcode: 'def456', caption: 'Test Instagram post 2' }
+      ]);
+      
+      // Mock TikTok posts
+      findTiktokPostsByClientId.mockResolvedValue([
+        { video_id: 'tiktok123', description: 'Test TikTok video 1', author_username: 'testuser' },
+        { video_id: 'tiktok456', description: 'Test TikTok video 2', author_username: 'testuser' }
+      ]);
+
+      const changes = {
+        igAdded: [],
+        tiktokAdded: [],
+        igDeleted: 0,
+        tiktokDeleted: 0,
+        linkChanges: []
+      };
+
+      const result = await sendTugasNotification(mockWaClient, 'TEST_CLIENT', changes, {
+        forceScheduled: true,
+        igCount: 2,
+        tiktokCount: 2
+      });
+
+      expect(result).toBe(true);
+      
+      // Verify Instagram section is included
+      expect(safeSendMessage).toHaveBeenCalledWith(
+        mockWaClient,
+        '120363123456789@g.us',
+        expect.stringContaining('📸 *Tugas Instagram (2 konten):*')
+      );
+      expect(safeSendMessage).toHaveBeenCalledWith(
+        mockWaClient,
+        '120363123456789@g.us',
+        expect.stringContaining('https://www.instagram.com/p/abc123/')
+      );
+      expect(safeSendMessage).toHaveBeenCalledWith(
+        mockWaClient,
+        '120363123456789@g.us',
+        expect.stringContaining('https://www.instagram.com/p/def456/')
+      );
+      
+      // Verify TikTok section is included
+      expect(safeSendMessage).toHaveBeenCalledWith(
+        mockWaClient,
+        '120363123456789@g.us',
+        expect.stringContaining('🎵 *Tugas TikTok (2 konten):*')
+      );
+      expect(safeSendMessage).toHaveBeenCalledWith(
+        mockWaClient,
+        '120363123456789@g.us',
+        expect.stringContaining('https://www.tiktok.com/@testuser/video/tiktok123')
+      );
+      expect(safeSendMessage).toHaveBeenCalledWith(
+        mockWaClient,
+        '120363123456789@g.us',
+        expect.stringContaining('https://www.tiktok.com/@testuser/video/tiktok456')
+      );
     });
   });
 });
