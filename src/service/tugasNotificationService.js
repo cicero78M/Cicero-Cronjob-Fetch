@@ -2,6 +2,8 @@
 
 import { findById as findClientById } from '../model/clientModel.js';
 import { safeSendMessage } from '../utils/waHelper.js';
+import { findByClientId as findInstaPostsByClientId } from '../model/instaPostModel.js';
+import { findByClientId as findTiktokPostsByClientId } from '../model/tiktokPostModel.js';
 
 const LOG_TAG = 'TUGAS_NOTIFICATION';
 
@@ -187,14 +189,102 @@ function normalizeGroupId(groupId) {
 }
 
 /**
+ * Get active Instagram posts for a client
+ * @param {string} clientId - Client ID
+ * @returns {Promise<Array>} Array of Instagram posts
+ */
+async function getActiveInstaPosts(clientId) {
+  try {
+    const posts = await findInstaPostsByClientId(clientId);
+    return posts || [];
+  } catch (error) {
+    console.error(`[${LOG_TAG}] Error fetching Instagram posts:`, error.message);
+    return [];
+  }
+}
+
+/**
+ * Get active TikTok posts for a client
+ * @param {string} clientId - Client ID
+ * @returns {Promise<Array>} Array of TikTok posts
+ */
+async function getActiveTiktokPosts(clientId) {
+  try {
+    const posts = await findTiktokPostsByClientId(clientId);
+    return posts || [];
+  } catch (error) {
+    console.error(`[${LOG_TAG}] Error fetching TikTok posts:`, error.message);
+    return [];
+  }
+}
+
+/**
+ * Format Instagram task list section with links
+ * @param {Array} posts - Array of Instagram posts
+ * @returns {string} Formatted Instagram section
+ */
+function formatInstaTaskSection(posts) {
+  if (!posts || posts.length === 0) return '';
+  
+  const lines = [
+    `📸 *Tugas Instagram (${posts.length} konten):*`,
+    ''
+  ];
+
+  posts.forEach((post, index) => {
+    const shortcode = post.shortcode || '';
+    const caption = post.caption ? 
+      (post.caption.length > 60 ? post.caption.substring(0, 60) + '...' : post.caption) : 
+      '(Tidak ada caption)';
+    const link = `https://www.instagram.com/p/${shortcode}/`;
+    
+    lines.push(`${index + 1}. ${link}`);
+    lines.push(`   _${caption}_`);
+  });
+
+  lines.push('');
+  return lines.join('\n');
+}
+
+/**
+ * Format TikTok task list section with links
+ * @param {Array} posts - Array of TikTok posts
+ * @returns {string} Formatted TikTok section
+ */
+function formatTiktokTaskSection(posts) {
+  if (!posts || posts.length === 0) return '';
+  
+  const lines = [
+    `🎵 *Tugas TikTok (${posts.length} konten):*`,
+    ''
+  ];
+
+  posts.forEach((post, index) => {
+    const videoId = post.video_id || '';
+    const description = post.description ? 
+      (post.description.length > 60 ? post.description.substring(0, 60) + '...' : post.description) : 
+      '(Tidak ada deskripsi)';
+    const username = post.author_username || 'user';
+    const link = `https://www.tiktok.com/@${username}/video/${videoId}`;
+    
+    lines.push(`${index + 1}. ${link}`);
+    lines.push(`   _${description}_`);
+  });
+
+  lines.push('');
+  return lines.join('\n');
+}
+
+/**
  * Format task list message for scheduled notifications
  * @param {string} clientName - Name of the client
  * @param {number} igCount - Current Instagram post count
  * @param {number} tiktokCount - Current TikTok post count
  * @param {Object} changes - Changes object (may be empty)
- * @returns {string} Formatted message
+ * @param {string} clientId - Client ID (to fetch posts)
+ * @returns {Promise<string>} Formatted message
  */
-function formatScheduledTaskList(clientName, igCount, tiktokCount, changes = null) {
+async function formatScheduledTaskList(clientName, igCount, tiktokCount, changes = null, clientId = null) {
   const lines = [
     `📋 *Daftar Tugas - ${clientName}*`,
     '',
@@ -229,6 +319,26 @@ function formatScheduledTaskList(clientName, igCount, tiktokCount, changes = nul
     }
     
     lines.push('');
+  }
+
+  // Add actual task links grouped by platform
+  if (clientId) {
+    lines.push('📝 *Detail Tugas:*');
+    lines.push('');
+    
+    // Fetch and add Instagram posts
+    const instaPosts = await getActiveInstaPosts(clientId);
+    const instaSection = formatInstaTaskSection(instaPosts);
+    if (instaSection) {
+      lines.push(instaSection);
+    }
+    
+    // Fetch and add TikTok posts
+    const tiktokPosts = await getActiveTiktokPosts(clientId);
+    const tiktokSection = formatTiktokTaskSection(tiktokPosts);
+    if (tiktokSection) {
+      lines.push(tiktokSection);
+    }
   }
 
   lines.push('_Pastikan semua tugas telah dikerjakan dengan baik._');
@@ -312,7 +422,7 @@ export async function sendTugasNotification(waClient, clientId, changes, options
 
     // If this is a scheduled notification, build scheduled task list
     if (forceScheduled) {
-      const scheduledMsg = formatScheduledTaskList(clientName, igCount, tiktokCount, changes);
+      const scheduledMsg = await formatScheduledTaskList(clientName, igCount, tiktokCount, changes, clientId);
       if (scheduledMsg) messages.push(scheduledMsg);
     } else {
       // Build messages based on changes (original behavior)
