@@ -52,8 +52,18 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   const clearAuthSession = shouldClearAuthSession();
 
   // Create auth directory if it doesn't exist
-  if (!fs.existsSync(sessionPath)) {
-    fs.mkdirSync(sessionPath, { recursive: true });
+  // Ensure the full path is created recursively and verify it's writable
+  try {
+    if (!fs.existsSync(sessionPath)) {
+      fs.mkdirSync(sessionPath, { recursive: true });
+      console.log(`[BAILEYS] Created auth directory: ${sessionPath}`);
+    }
+    
+    // Verify directory is writable by attempting to access it
+    fs.accessSync(sessionPath, fs.constants.W_OK | fs.constants.R_OK);
+  } catch (error) {
+    console.error(`[BAILEYS] Failed to create or access auth directory: ${sessionPath}`, error);
+    throw new Error(`Auth directory not accessible: ${error.message}`);
   }
 
   let sock = null;
@@ -85,7 +95,15 @@ export async function createBaileysClient(clientId = 'wa-admin') {
     connectInProgress = (async () => {
       try {
         // Load auth state from file system
-        const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+        console.log(`[BAILEYS] Loading auth state from: ${sessionPath}`);
+        let state, saveCreds;
+        try {
+          ({ state, saveCreds } = await useMultiFileAuthState(sessionPath));
+          console.log(`[BAILEYS] Auth state loaded successfully`);
+        } catch (authError) {
+          console.error(`[BAILEYS] Failed to load auth state from ${sessionPath}:`, authError);
+          throw new Error(`Auth state initialization failed: ${authError.message}`);
+        }
         
         // Fetch latest Baileys version
         const { version, isLatest } = await fetchLatestBaileysVersion();
