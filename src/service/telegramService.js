@@ -95,6 +95,7 @@ async function waitForLogClientReady(timeout = 30000) {
     await initPromise;
   }
   
+  // Check if already ready after initialization
   if (isLogClientReady) {
     return true;
   }
@@ -111,6 +112,12 @@ async function waitForLogClientReady(timeout = 30000) {
         isLogClientReady = true;
         resolve(true);
       });
+      
+      // Check again after listener is registered to avoid race condition
+      if (isLogClientReady) {
+        clearTimeout(timer);
+        resolve(true);
+      }
     } else {
       clearTimeout(timer);
       resolve(false);
@@ -120,6 +127,8 @@ async function waitForLogClientReady(timeout = 30000) {
 
 /**
  * Send a text message to WhatsApp admin numbers
+ * NOTE: Function name kept as 'sendTelegramMessage' for backward compatibility
+ * After migration from Telegram to WhatsApp, existing code imports remain unchanged
  * @param {string} message - The message to send
  * @param {object} options - Additional options (optional)
  * @returns {Promise<boolean>} Success status
@@ -190,6 +199,7 @@ export async function sendTelegramMessage(message, options = {}) {
 
 /**
  * Send a log message to WhatsApp
+ * NOTE: Function name kept as 'sendTelegramLog' for backward compatibility
  * Formats the message with timestamp and severity
  * @param {string} level - Log level (INFO, WARN, ERROR)
  * @param {string} message - The log message
@@ -221,6 +231,7 @@ export async function sendTelegramLog(level, message) {
 
 /**
  * Send error notification to WhatsApp
+ * NOTE: Function name kept as 'sendTelegramError' for backward compatibility
  * @param {string} context - Context of the error
  * @param {Error} error - Error object
  * @returns {Promise<boolean>} Success status
@@ -246,6 +257,7 @@ export async function sendTelegramError(context, error) {
 
 /**
  * Send cron job report to WhatsApp
+ * NOTE: Function name kept as 'sendTelegramCronReport' for backward compatibility
  * @param {string} jobName - Name of the cron job
  * @param {object} report - Report data
  * @returns {Promise<boolean>} Success status
@@ -288,6 +300,7 @@ export async function sendTelegramCronReport(jobName, report) {
 
 /**
  * Check if WhatsApp log is enabled and configured
+ * NOTE: Function name kept as 'isTelegramEnabled' for backward compatibility
  * @returns {boolean} True if WhatsApp log is enabled
  */
 export function isTelegramEnabled() {
@@ -296,7 +309,8 @@ export function isTelegramEnabled() {
 
 /**
  * Get WhatsApp log client instance (for advanced usage)
- * @returns {object|null} Client instance or null
+ * NOTE: Function name kept as 'getTelegramBot' for backward compatibility
+ * @returns {object|null} WhatsApp client instance or null
  */
 export function getTelegramBot() {
   return waLogClient;
