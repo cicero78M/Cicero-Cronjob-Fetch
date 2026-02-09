@@ -94,29 +94,29 @@ async function ensureClientState(clientId) {
 
 /**
  * Determine if we should fetch posts based on current time
- * Posts should only be fetched from 06:00 to 16:59 Jakarta time (until 17:00, exclusive)
- * @returns {boolean} True if it's time to fetch posts
+ * Cron runs until 16:30, so we check if hour < 17 to allow the 16:30 job to execute
+ * @returns {boolean} True if it's time to fetch posts (06:00-16:59 allows 16:30 job)
  */
 function shouldFetchPosts() {
   const now = new Date();
   // Get current hour in Jakarta timezone (UTC+7)
   const jakartaHour = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' })).getHours();
   
-  // Fetch posts from 06:00 until 17:00 (exclusive), i.e., 06:00 to 16:59
+  // Check if hour is between 6 and 16 (allows jobs scheduled at 06:00, 06:30, ..., 16:30)
   return jakartaHour >= 6 && jakartaHour < 17;
 }
 
 /**
  * Determine if we should send hourly notifications based on current time
- * Notifications should only be sent from 06:00 to 16:59 Jakarta time (until 17:00, exclusive)
- * @returns {boolean} True if it's time to send hourly notifications
+ * Notifications align with post fetch period (cron runs until 16:30)
+ * @returns {boolean} True if within notification time (06:00-16:59 allows 16:30 notifications)
  */
 function shouldSendHourlyNotifications() {
   const now = new Date();
   // Get current hour in Jakarta timezone (UTC+7)
   const jakartaHour = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' })).getHours();
   
-  // Send hourly notifications from 06:00 until 17:00 (exclusive), i.e., 06:00 to 16:59
+  // Check if hour is between 6 and 16 (allows notifications during post fetch period)
   return jakartaHour >= 6 && jakartaHour < 17;
 }
 
@@ -136,8 +136,8 @@ export async function runCron(options = {}) {
     const skipPostFetch = forceEngagementOnly || !isPostFetchTime;
     
     const timeBasedMessage = isPostFetchTime 
-      ? "post fetch time (06:00-16:59)" 
-      : "engagement only time (17:30-22:00)";
+      ? "post fetch period (last run 16:30)" 
+      : "engagement only period (17:30-22:00)";
     
     logMessage("start", null, "cron", "start", null, null, "", { 
       forceEngagementOnly, 
@@ -233,14 +233,14 @@ export async function runCron(options = {}) {
         logMessage("fetchComplete", clientId, "fetchComplete", "completed", countsBefore, countsAfter,
           "Social media fetch completed successfully");
 
-        // Check if it's time for hourly notification (only during 06:00-16:59)
+        // Check if it's time for hourly notification (during post fetch period, last run 16:30)
         const isNotificationTime = shouldSendHourlyNotifications();
         const shouldSendHourly = isNotificationTime && shouldSendHourlyNotification(clientId);
         const hasChanges = hasNotableChanges(changes);
         
         // Send WhatsApp notification if:
         // 1. There are notable changes (original behavior), OR
-        // 2. 1 hour has passed since last notification AND it's within 06:00-16:59 (new behavior - hourly notifications)
+        // 2. 1 hour has passed since last notification AND within post fetch period (hourly notifications)
         if (hasChanges || shouldSendHourly) {
           const changeSummary = buildChangeSummary(changes);
           const notificationReason = shouldSendHourly 
@@ -331,7 +331,7 @@ const ENGAGEMENT_ONLY_SCHEDULES = [
 
 const CRON_OPTIONS = { timezone: "Asia/Jakarta" };
 
-// Schedule post fetch job (06:00 to 17:00)
+// Schedule post fetch job (every 30 min from 06:00 to 16:30)
 scheduleCronJob(JOB_KEY + ":post-fetch", POST_FETCH_SCHEDULE, runCron, CRON_OPTIONS);
 
 // Schedule engagement only jobs (17:30 to 22:00)
