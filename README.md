@@ -14,14 +14,14 @@ This service runs scheduled cron jobs to:
 ## Features
 
 - **Automated Fetching**: 
-  - Posts fetch every 30 minutes from 6 AM to 5 PM (Jakarta time)
+  - Posts fetch every 30 minutes from 6 AM to 4:30 PM (Jakarta time)
   - Engagement tracking (likes & comments) every 30 minutes from 6 AM to 10 PM (Jakarta time)
 - **Multi-Platform Support**: Instagram and TikTok
 - **Engagement Tracking**: Posts, likes, and comments
 - **Database Storage**: All data stored in PostgreSQL
 - **Client Management**: Supports multiple social media accounts
 - **Error Handling**: Robust error logging and recovery
-- **WhatsApp Notifications**: Hourly task notifications from 6 AM to 5 PM via WA Gateway
+- **WhatsApp Notifications**: Hourly task notifications from 6 AM to 4:30 PM via WA Gateway
 - **WhatsApp Logging**: System logs and errors sent to admin WhatsApp numbers
 
 ## Requirements
@@ -91,7 +91,7 @@ npm run dev
 
 The fetch job runs on the following schedule (Asia/Jakarta timezone):
 
-### Post Fetch (06:00 - 17:00)
+### Post Fetch (06:00 - 16:30)
 - Runs every 30 minutes: 6:00, 6:30, 7:00, ..., 16:00, 16:30
 - Fetches Instagram posts, TikTok posts, Instagram likes, and TikTok comments
 - Sends task notifications every hour
