@@ -20,7 +20,10 @@ const lastNotificationByClient = new Map();
 let isFetchInFlight = false;
 
 // Notification interval: 1 hour (in milliseconds)
-const NOTIFICATION_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+const MINUTES_PER_HOUR = 60;
+const SECONDS_PER_MINUTE = 60;
+const MS_PER_SECOND = 1000;
+const NOTIFICATION_INTERVAL_MS = MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PER_SECOND; // 1 hour
 
 /**
  * Check if enough time has passed since last notification for a client
