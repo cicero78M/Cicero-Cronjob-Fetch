@@ -92,6 +92,34 @@ async function ensureClientState(clientId) {
   return initialState;
 }
 
+/**
+ * Determine if we should fetch posts based on current time
+ * Posts should only be fetched from 06:00 to 17:00 Jakarta time
+ * @returns {boolean} True if it's time to fetch posts
+ */
+function shouldFetchPosts() {
+  const now = new Date();
+  // Get current hour in Jakarta timezone (UTC+7)
+  const jakartaHour = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' })).getHours();
+  
+  // Fetch posts from 06:00 to 17:00 (inclusive of 6 AM, exclusive of 6 PM)
+  return jakartaHour >= 6 && jakartaHour < 17;
+}
+
+/**
+ * Determine if we should send hourly notifications based on current time
+ * Notifications should only be sent from 06:00 to 17:00 Jakarta time
+ * @returns {boolean} True if it's time to send hourly notifications
+ */
+function shouldSendHourlyNotifications() {
+  const now = new Date();
+  // Get current hour in Jakarta timezone (UTC+7)
+  const jakartaHour = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' })).getHours();
+  
+  // Send hourly notifications from 06:00 to 17:00 (inclusive of 6 AM, exclusive of 6 PM)
+  return jakartaHour >= 6 && jakartaHour < 17;
+}
+
 export async function runCron(options = {}) {
   const { forceEngagementOnly = false } = options;
 
@@ -103,10 +131,21 @@ export async function runCron(options = {}) {
   isFetchInFlight = true;
 
   try {
-    logMessage("start", null, "cron", "start", null, null, "", { forceEngagementOnly });
-    await sendTelegramLog("INFO", `🚀 Cron job started: ${LOG_TAG}${forceEngagementOnly ? " (engagement only mode)" : ""}`);
+    // Determine if we should fetch posts based on time
+    const isPostFetchTime = shouldFetchPosts();
+    const skipPostFetch = forceEngagementOnly || !isPostFetchTime;
+    
+    const timeBasedMessage = isPostFetchTime 
+      ? "post fetch time (06:00-17:00)" 
+      : "engagement only time (17:30-22:00)";
+    
+    logMessage("start", null, "cron", "start", null, null, "", { 
+      forceEngagementOnly, 
+      skipPostFetch,
+      timeBasedMessage 
+    });
+    await sendTelegramLog("INFO", `🚀 Cron job started: ${LOG_TAG} - ${timeBasedMessage}${forceEngagementOnly ? " (forced engagement only)" : ""}`);
 
-    const skipPostFetch = Boolean(forceEngagementOnly);
     const activeClients = await findAllActiveClientsWithSosmed();
 
     if (activeClients.length === 0) {
@@ -194,13 +233,14 @@ export async function runCron(options = {}) {
         logMessage("fetchComplete", clientId, "fetchComplete", "completed", countsBefore, countsAfter,
           "Social media fetch completed successfully");
 
-        // Check if it's time for hourly notification
-        const shouldSendHourly = shouldSendHourlyNotification(clientId);
+        // Check if it's time for hourly notification (only during 06:00-17:00)
+        const isNotificationTime = shouldSendHourlyNotifications();
+        const shouldSendHourly = isNotificationTime && shouldSendHourlyNotification(clientId);
         const hasChanges = hasNotableChanges(changes);
         
         // Send WhatsApp notification if:
         // 1. There are notable changes (original behavior), OR
-        // 2. 1 hour has passed since last notification (new behavior - hourly notifications)
+        // 2. 1 hour has passed since last notification AND it's within 06:00-17:00 (new behavior - hourly notifications)
         if (hasChanges || shouldSendHourly) {
           const changeSummary = buildChangeSummary(changes);
           const notificationReason = shouldSendHourly 
@@ -276,10 +316,28 @@ export async function runCron(options = {}) {
 
 export const JOB_KEY = "./src/cron/cronDirRequestFetchSosmed.js";
 
-// Run every 30 minutes from 6 AM to 10 PM Jakarta time
-const CRON_SCHEDULES = ["0,30 6-21 * * *", "0 22 * * *"];
+// Posts fetch: Run every 30 minutes from 6 AM to 5 PM Jakarta time (06:00 to 17:00)
+// This includes: 6:00, 6:30, 7:00, 7:30, ..., 16:00, 16:30
+const POST_FETCH_SCHEDULE = "0,30 6-16 * * *";
+
+// Engagement only: Run every 30 minutes from 5:30 PM to 10 PM Jakarta time (17:30 to 22:00)
+// This includes: 17:30, 18:00, 18:30, 19:00, 19:30, 20:00, 20:30, 21:00, 21:30, 22:00
+const ENGAGEMENT_ONLY_SCHEDULES = [
+  "30 17-21 * * *",  // 17:30, 18:30, 19:30, 20:30, 21:30
+  "0 18-22 * * *"    // 18:00, 19:00, 20:00, 21:00, 22:00
+];
+
 const CRON_OPTIONS = { timezone: "Asia/Jakarta" };
 
-CRON_SCHEDULES.forEach((cronExpression) => {
-  scheduleCronJob(JOB_KEY, cronExpression, runCron, CRON_OPTIONS);
+// Schedule post fetch job (06:00 to 17:00)
+scheduleCronJob(JOB_KEY + ":post-fetch", POST_FETCH_SCHEDULE, runCron, CRON_OPTIONS);
+
+// Schedule engagement only jobs (17:30 to 22:00)
+ENGAGEMENT_ONLY_SCHEDULES.forEach((schedule, index) => {
+  scheduleCronJob(
+    JOB_KEY + `:engagement-only-${index}`, 
+    schedule, 
+    () => runCron({ forceEngagementOnly: true }), 
+    CRON_OPTIONS
+  );
 });
