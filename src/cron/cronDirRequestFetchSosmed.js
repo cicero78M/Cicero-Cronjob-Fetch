@@ -16,37 +16,41 @@ import { sendTelegramLog, sendTelegramError } from "../service/telegramService.j
 const LOG_TAG = "CRON DIRFETCH SOSMED";
 
 const lastStateByClient = new Map();
+const lastNotificationByClient = new Map();
 let isFetchInFlight = false;
 
-// Scheduled notification times (Jakarta time) - always send notifications at these times
-const SCHEDULED_NOTIFICATION_TIMES = [
-  { hour: 6, minute: 30 },   // 06:30
-    { hour: 11, minute: 0 },   // 14:00
-    { hour: 12, minute: 0 },   // 14:00
-    { hour: 13, minute: 0 },   // 14:00
-    { hour: 14, minute: 0 },   // 14:00
-      { hour: 15, minute: 0 },   // 14:00
-  { hour: 16, minute: 0 },   // 14:00
-  { hour: 16, minute: 30 },    // 17:00
-  { hour: 17, minute: 0 },    // 17:00
-  { hour: 17, minute: 30 }    // 17:00
-
-];
+// Notification interval: 1 hour (in milliseconds)
+const MINUTES_PER_HOUR = 60;
+const SECONDS_PER_MINUTE = 60;
+const MS_PER_SECOND = 1000;
+const NOTIFICATION_INTERVAL_MS = MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PER_SECOND; // 1 hour
 
 /**
- * Check if current time matches any scheduled notification time
- * @returns {boolean} True if current time is a scheduled notification time
+ * Check if enough time has passed since last notification for a client
+ * @param {string} clientId - Client ID
+ * @returns {boolean} True if 1 hour has passed since last notification
  */
-function isScheduledNotificationTime() {
-  const now = new Date();
-  // Convert to Jakarta time (UTC+7)
-  const jakartaTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
-  const currentHour = jakartaTime.getHours();
-  const currentMinute = jakartaTime.getMinutes();
+function shouldSendHourlyNotification(clientId) {
+  const lastNotificationTime = lastNotificationByClient.get(clientId);
   
-  return SCHEDULED_NOTIFICATION_TIMES.some(
-    scheduledTime => scheduledTime.hour === currentHour && scheduledTime.minute === currentMinute
-  );
+  // If no previous notification, send one
+  if (!lastNotificationTime) {
+    return true;
+  }
+  
+  const now = Date.now();
+  const timeSinceLastNotification = now - lastNotificationTime;
+  
+  // Send if 1 hour has passed
+  return timeSinceLastNotification >= NOTIFICATION_INTERVAL_MS;
+}
+
+/**
+ * Update the last notification timestamp for a client
+ * @param {string} clientId - Client ID
+ */
+function updateLastNotificationTime(clientId) {
+  lastNotificationByClient.set(clientId, Date.now());
 }
 
 function logMessage(phase, clientId, action, result, countsBefore, countsAfter, message = "", meta = {}) {
@@ -190,17 +194,17 @@ export async function runCron(options = {}) {
         logMessage("fetchComplete", clientId, "fetchComplete", "completed", countsBefore, countsAfter,
           "Social media fetch completed successfully");
 
-        // Determine if this is a scheduled notification time
-        const isScheduledTime = isScheduledNotificationTime();
+        // Check if it's time for hourly notification
+        const shouldSendHourly = shouldSendHourlyNotification(clientId);
         const hasChanges = hasNotableChanges(changes);
         
         // Send WhatsApp notification if:
         // 1. There are notable changes (original behavior), OR
-        // 2. It's a scheduled notification time (new behavior - always send at 6:30, 14:00, 17:00)
-        if (hasChanges || isScheduledTime) {
+        // 2. 1 hour has passed since last notification (new behavior - hourly notifications)
+        if (hasChanges || shouldSendHourly) {
           const changeSummary = buildChangeSummary(changes);
-          const notificationReason = isScheduledTime 
-            ? `Scheduled notification (${hasChanges ? 'with changes: ' + changeSummary : 'no changes'})`
+          const notificationReason = shouldSendHourly 
+            ? `Hourly notification (${hasChanges ? 'with changes: ' + changeSummary : 'no changes'})`
             : `Changes detected: ${changeSummary}`;
           
           logMessage("waNotification", clientId, "sendNotification", "start", countsBefore, countsAfter,
@@ -210,7 +214,7 @@ export async function runCron(options = {}) {
             // Use only waGatewayClient for task notifications
             if (waGatewayClient) {
               const notificationOptions = {
-                forceScheduled: isScheduledTime,
+                forceScheduled: shouldSendHourly,
                 igCount: countsAfter.ig,
                 tiktokCount: countsAfter.tiktok
               };
@@ -223,6 +227,9 @@ export async function runCron(options = {}) {
               );
               
               if (notificationSent) {
+                // Update last notification time only if notification was actually sent
+                updateLastNotificationTime(clientId);
+                
                 logMessage("waNotification", clientId, "sendNotification", "completed", countsBefore, countsAfter,
                   `WA notification sent: ${notificationReason}`);
                 
@@ -243,7 +250,7 @@ export async function runCron(options = {}) {
           }
         } else {
           logMessage("waNotification", clientId, "sendNotification", "skipped", countsBefore, countsAfter,
-            "No notable changes detected and not a scheduled notification time");
+            "No notable changes detected and not time for hourly notification");
         }
 
       } catch (clientErr) {
