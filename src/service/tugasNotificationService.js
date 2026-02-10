@@ -281,13 +281,11 @@ function formatTiktokTaskSection(posts) {
 /**
  * Format task list message for scheduled notifications
  * @param {string} clientName - Name of the client
- * @param {number} igCount - Current Instagram post count
- * @param {number} tiktokCount - Current TikTok post count
  * @param {Object} changes - Changes object (may be empty)
  * @param {string} clientId - Client ID (to fetch posts)
  * @returns {Promise<string>} Formatted message
  */
-async function formatScheduledTaskList(clientName, igCount, tiktokCount, changes = null, clientId = null) {
+async function formatScheduledTaskList(clientName, changes = null, clientId = null) {
   // Fetch actual posts first to get accurate counts
   let instaPosts = [];
   let tiktokPosts = [];
@@ -436,7 +434,7 @@ export async function sendTugasNotification(waClient, clientId, changes, options
 
     // If this is a scheduled notification, build scheduled task list
     if (forceScheduled) {
-      const scheduledMsg = await formatScheduledTaskList(clientName, igCount, tiktokCount, changes, clientId);
+      const scheduledMsg = await formatScheduledTaskList(clientName, changes, clientId);
       if (scheduledMsg) messages.push(scheduledMsg);
     } else {
       // Build messages based on changes (original behavior)

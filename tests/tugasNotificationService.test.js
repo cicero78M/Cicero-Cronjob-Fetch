@@ -231,7 +231,7 @@ describe('tugasNotificationService', () => {
         { video_id: 'vid4', caption: 'Video 4', author_username: 'testuser' },
         { video_id: 'vid5', caption: 'Video 5', author_username: 'testuser' }
       ]);
-      
+
       const changes = {
         igAdded: [],
         tiktokAdded: [],
