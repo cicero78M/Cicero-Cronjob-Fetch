@@ -288,12 +288,25 @@ function formatTiktokTaskSection(posts) {
  * @returns {Promise<string>} Formatted message
  */
 async function formatScheduledTaskList(clientName, igCount, tiktokCount, changes = null, clientId = null) {
+  // Fetch actual posts first to get accurate counts
+  let instaPosts = [];
+  let tiktokPosts = [];
+  
+  if (clientId) {
+    instaPosts = await getActiveInstaPosts(clientId);
+    tiktokPosts = await getActiveTiktokPosts(clientId);
+  }
+  
+  // Use actual fetched post counts instead of parameters
+  const actualIgCount = instaPosts.length;
+  const actualTiktokCount = tiktokPosts.length;
+  
   const lines = [
     `📋 *Daftar Tugas - ${clientName}*`,
     '',
     `Status tugas saat ini:`,
-    `📸 Instagram: *${igCount}* konten`,
-    `🎵 TikTok: *${tiktokCount}* konten`,
+    `📸 Instagram: *${actualIgCount}* konten`,
+    `🎵 TikTok: *${actualTiktokCount}* konten`,
     ''
   ];
 
@@ -325,19 +338,17 @@ async function formatScheduledTaskList(clientName, igCount, tiktokCount, changes
   }
 
   // Add actual task links grouped by platform
-  if (clientId) {
+  if (clientId && (instaPosts.length > 0 || tiktokPosts.length > 0)) {
     lines.push('📝 *Detail Tugas:*');
     lines.push('');
     
-    // Fetch and add Instagram posts
-    const instaPosts = await getActiveInstaPosts(clientId);
+    // Add Instagram posts (already fetched)
     const instaSection = formatInstaTaskSection(instaPosts);
     if (instaSection) {
       lines.push(instaSection);
     }
     
-    // Fetch and add TikTok posts
-    const tiktokPosts = await getActiveTiktokPosts(clientId);
+    // Add TikTok posts (already fetched)
     const tiktokSection = formatTiktokTaskSection(tiktokPosts);
     if (tiktokSection) {
       lines.push(tiktokSection);

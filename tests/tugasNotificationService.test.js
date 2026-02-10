@@ -211,6 +211,27 @@ describe('tugasNotificationService', () => {
     });
 
     it('should send scheduled notification with task counts', async () => {
+      // Mock actual posts to match expected counts
+      getPostsTodayByClientInsta.mockResolvedValue([
+        { shortcode: 'post1', caption: 'Post 1' },
+        { shortcode: 'post2', caption: 'Post 2' },
+        { shortcode: 'post3', caption: 'Post 3' },
+        { shortcode: 'post4', caption: 'Post 4' },
+        { shortcode: 'post5', caption: 'Post 5' },
+        { shortcode: 'post6', caption: 'Post 6' },
+        { shortcode: 'post7', caption: 'Post 7' },
+        { shortcode: 'post8', caption: 'Post 8' },
+        { shortcode: 'post9', caption: 'Post 9' },
+        { shortcode: 'post10', caption: 'Post 10' }
+      ]);
+      getPostsTodayByClientTiktok.mockResolvedValue([
+        { video_id: 'vid1', caption: 'Video 1', author_username: 'testuser' },
+        { video_id: 'vid2', caption: 'Video 2', author_username: 'testuser' },
+        { video_id: 'vid3', caption: 'Video 3', author_username: 'testuser' },
+        { video_id: 'vid4', caption: 'Video 4', author_username: 'testuser' },
+        { video_id: 'vid5', caption: 'Video 5', author_username: 'testuser' }
+      ]);
+      
       const changes = {
         igAdded: [],
         tiktokAdded: [],
