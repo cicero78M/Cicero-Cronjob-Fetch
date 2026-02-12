@@ -5,9 +5,20 @@ This document summarizes the automated jobs ("activity") that run inside Cicero_
 
 ## Runtime safeguards & configuration sync
 
-Every cron file calls `scheduleCronJob`, which delegates to `src/utils/cronScheduler.js`. Before executing a handler, the scheduler fetches the matching record in `cron_job_config`; the job runs only when `is_active=true` so operations can toggle tasks safely without redeploying. The scheduler now retries the lookup once and logs errors before falling back to running the handler if configuration is unavailable, while still honoring `is_active=false` whenever the lookup succeeds. During prolonged database outages, disabled jobs may temporarily run because the safety check cannot be read—monitor `[CRON] Failed to check status...` logs to spot this scenario. The dirRequest group adds a higher-level toggle through `ENABLE_DIRREQUEST_GROUP` to pause all Ditbinmas schedules at once.【F:src/utils/cronScheduler.js†L1-L73】【F:src/cron/dirRequest/index.js†L1-L92】
+Every cron file calls `scheduleCronJob`, which delegates to `src/utils/cronScheduler.js`. Before executing a handler, the scheduler fetches the matching record in `cron_job_config`; the job runs only when `is_active=true` so operations can toggle tasks safely without redeploying. The scheduler retries the lookup once, then follows `CRON_STATUS_LOOKUP_STRATEGY` (default `fail_open`) when status checks still fail: `fail_open` keeps running the handler, while `fail_closed` skips execution and emits an alert log. This lets operations choose availability-first behavior for development or strict safety for production. The dirRequest group adds a higher-level toggle through `ENABLE_DIRREQUEST_GROUP` to pause all Ditbinmas schedules at once.【F:src/utils/cronScheduler.js†L1-L104】【F:src/cron/dirRequest/index.js†L1-L92】
 
 The configuration data lives in the migration `sql/migrations/20251022_create_cron_job_config.sql` and is surfaced in the cron configuration menu, keeping this schedule synchronized with the controls that ops staff use to enable or pause jobs.【F:sql/migrations/20251022_create_cron_job_config.sql†L1-L34】
+
+
+
+### Cron status lookup strategy
+
+Set `CRON_STATUS_LOOKUP_STRATEGY` to control behavior when `cron_job_config` cannot be read after retries:
+
+- `fail_open` (default): run the handler anyway after lookup errors to preserve schedule continuity.
+- `fail_closed`: skip handler execution and log `[CRON] ALERT: ...` so operators can investigate DB/config outages before jobs resume.
+
+Use `fail_closed` in stricter production environments where accidental execution is riskier than missed runs.
 
 dirRequest cron registration happens immediately at boot (subject to `ENABLE_DIRREQUEST_GROUP`). Every dirRequest job key is single-flight: if a previous run is still in-flight, the next scheduled run logs a skip message and exits early to prevent overlap.【F:src/cron/dirRequest/index.js†L1-L108】
 

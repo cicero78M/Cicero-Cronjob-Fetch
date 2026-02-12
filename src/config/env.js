@@ -31,6 +31,7 @@ export const env = cleanEnv(process.env, {
   }),
   WA_WWEBJS_PROTOCOL_TIMEOUT_MS: num({ default: 120000 }),
   ENABLE_DIRREQUEST_GROUP: bool({ default: true }),
+  CRON_STATUS_LOOKUP_STRATEGY: str({ default: 'fail_open' }),
   DEBUG_FETCH_INSTAGRAM: bool({ default: false }),
   AMQP_URL: str({ default: 'amqp://localhost' }),
   BACKUP_DIR: str({ default: 'backups' }),
