@@ -319,7 +319,7 @@ export const JOB_KEY = "./src/cron/cronDirRequestFetchSosmed.js";
 // Posts fetch: Run every 30 minutes from 6 AM until 5 PM Jakarta time
 // Last execution at 16:30 (4:30 PM), ensuring no overlap with engagement-only period
 // This includes: 6:00, 6:30, 7:00, 7:30, ..., 16:00, 16:30
-const POST_FETCH_SCHEDULE = "0,30 6-16 * * *";
+const POST_FETCH_SCHEDULE = "5,30 6-16 * * *";
 
 // Engagement only: Run every 30 minutes from 5:30 PM to 10 PM Jakarta time
 // First execution at 17:30 (5:30 PM), after post fetch period ends
