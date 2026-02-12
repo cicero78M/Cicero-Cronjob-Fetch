@@ -9,6 +9,10 @@ function loadCronJobService() {
 }
 
 const DEFAULT_LOG_PREFIX = '[CRON]';
+const CRON_STATUS_LOOKUP_STRATEGY = {
+  FAIL_OPEN: 'fail_open',
+  FAIL_CLOSED: 'fail_closed',
+};
 
 function log(message, ...args) {
   console.log(`${DEFAULT_LOG_PREFIX} ${message}`, ...args);
@@ -16,6 +20,18 @@ function log(message, ...args) {
 
 function logError(message, error) {
   console.error(`${DEFAULT_LOG_PREFIX} ${message}`, error);
+}
+
+function getStatusLookupStrategy() {
+  const configuredStrategy =
+    process.env.CRON_STATUS_LOOKUP_STRATEGY?.trim().toLowerCase() ||
+    CRON_STATUS_LOOKUP_STRATEGY.FAIL_OPEN;
+
+  if (configuredStrategy === CRON_STATUS_LOOKUP_STRATEGY.FAIL_CLOSED) {
+    return CRON_STATUS_LOOKUP_STRATEGY.FAIL_CLOSED;
+  }
+
+  return CRON_STATUS_LOOKUP_STRATEGY.FAIL_OPEN;
 }
 
 export function scheduleCronJob(jobKey, cronExpression, handler, options = {}) {
@@ -31,6 +47,8 @@ export function scheduleCronJob(jobKey, cronExpression, handler, options = {}) {
     async (...args) => {
       let config;
       let getCronJob;
+      let statusLookupFailed = false;
+      let lastStatusLookupError;
 
       try {
         ({ getCronJob } = await loadCronJobService());
@@ -47,15 +65,28 @@ export function scheduleCronJob(jobKey, cronExpression, handler, options = {}) {
             config = await getCronJob(jobKey);
             break;
           } catch (err) {
+            statusLookupFailed = true;
+            lastStatusLookupError = err;
             logError(
               `Failed to check status for job ${jobKey} (attempt ${attempt}).`,
               err,
             );
 
             if (attempt === 2) {
-              log(
-                `Proceeding with job ${jobKey} handler after status lookup failures.`,
-              );
+              const statusLookupStrategy = getStatusLookupStrategy();
+              if (statusLookupStrategy === CRON_STATUS_LOOKUP_STRATEGY.FAIL_CLOSED) {
+                logError(
+                  `ALERT: Skipping job ${jobKey} because status lookup failed and CRON_STATUS_LOOKUP_STRATEGY=fail_closed.`,
+                  lastStatusLookupError,
+                );
+                return;
+              }
+
+              if (statusLookupFailed) {
+                log(
+                  `Proceeding with job ${jobKey} handler after status lookup failures (strategy: fail_open).`,
+                );
+              }
             }
           }
         }

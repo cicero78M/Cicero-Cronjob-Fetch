@@ -23,6 +23,10 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
+afterEach(() => {
+  delete process.env.CRON_STATUS_LOOKUP_STRATEGY;
+});
+
 test('skips executing handler when job is inactive', async () => {
   const handler = jest.fn();
   let scheduledHandler;
@@ -73,6 +77,41 @@ test('retries status lookup once and still honors inactive flag when retry succe
 });
 
 test('executes handler when status lookup keeps failing', async () => {
+  const handler = jest.fn();
+  let scheduledHandler;
+  mockSchedule.mockImplementation((expr, callback) => {
+    scheduledHandler = callback;
+    return { stop: jest.fn() };
+  });
+  mockGetCronJob.mockRejectedValue(new Error('database offline'));
+
+  scheduleCronJob('job1', '* * * * *', handler);
+  await scheduledHandler();
+
+  expect(mockGetCronJob).toHaveBeenCalledTimes(2);
+  expect(handler).toHaveBeenCalled();
+});
+
+
+test('skips handler when status lookup keeps failing and strategy is fail_closed', async () => {
+  process.env.CRON_STATUS_LOOKUP_STRATEGY = 'fail_closed';
+  const handler = jest.fn();
+  let scheduledHandler;
+  mockSchedule.mockImplementation((expr, callback) => {
+    scheduledHandler = callback;
+    return { stop: jest.fn() };
+  });
+  mockGetCronJob.mockRejectedValue(new Error('database offline'));
+
+  scheduleCronJob('job1', '* * * * *', handler);
+  await scheduledHandler();
+
+  expect(mockGetCronJob).toHaveBeenCalledTimes(2);
+  expect(handler).not.toHaveBeenCalled();
+});
+
+test('falls back to fail_open when strategy value is invalid', async () => {
+  process.env.CRON_STATUS_LOOKUP_STRATEGY = 'unexpected';
   const handler = jest.fn();
   let scheduledHandler;
   mockSchedule.mockImplementation((expr, callback) => {
