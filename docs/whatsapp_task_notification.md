@@ -102,7 +102,11 @@ Format group ID WhatsApp harus:
 6. **src/cron/cronWaOutboxWorker.js** (New)
    - Menjalankan worker outbox setiap menit
 
-7. **src/model/waNotificationReminderStateModel.js** (Extended)
+7. **app.js** (Updated)
+   - Wajib mengimpor `src/cron/cronWaOutboxWorker.js` supaya worker outbox ter-register saat service start
+   - Tanpa import ini, event perubahan tugas tetap masuk outbox tetapi tidak pernah terkirim karena WA gateway tidak ikut inisialisasi
+
+8. **src/model/waNotificationReminderStateModel.js** (Extended)
    - Menyediakan akses state scheduler WA (`wa_notification_scheduler_state`)
    - Fungsi bulk-read state per `client_id`
    - Fungsi upsert state scheduler pasca proses client
@@ -127,6 +131,7 @@ Format group ID WhatsApp harus:
    - Simpan event ke `wa_notification_outbox` dengan status `pending` dan `idempotency_key`
    - Deduplikasi otomatis saat insert (`ON CONFLICT idempotency_key DO NOTHING`)
 5. **Worker kirim WhatsApp**:
+   - Worker aktif hanya bila `app.js` memuat `src/cron/cronWaOutboxWorker.js` saat boot
    - Cron worker cepat membaca outbox status `pending`/`retrying`
    - Saat diproses, status diubah ke `processing` dan `attempt_count` bertambah
    - Jika sukses: status `sent` + isi `sent_at`
