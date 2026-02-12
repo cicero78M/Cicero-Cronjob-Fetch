@@ -14,8 +14,8 @@ This service runs scheduled cron jobs to:
 ## Features
 
 - **Automated Fetching**: 
-  - Posts fetch every 30 minutes from 6 AM to 4:30 PM (Jakarta time)
-  - Engagement tracking (likes & comments) every 30 minutes from 6 AM to 10 PM (Jakarta time)
+  - Post fetch + engagement refresh mengikuti cron `5,30 6-16 * * *` (06:05, 06:30, ... , 16:05, 16:30 WIB)
+  - Engagement-only (likes & comments) mengikuti cron `30 17-21 * * *` dan `0 18-22 * * *` (17:30 s.d. 22:00 WIB)
 - **Multi-Platform Support**: Instagram and TikTok
 - **Engagement Tracking**: Posts, likes, and comments
 - **Database Storage**: All data stored in PostgreSQL
@@ -91,15 +91,32 @@ npm run dev
 
 The fetch job runs on the following schedule (Asia/Jakarta timezone):
 
-### Post Fetch (06:00 - 16:30)
-- Runs every 30 minutes: 6:00, 6:30, 7:00, ..., 16:00, 16:30
+### Post Fetch + Engagement Refresh (06:05 - 16:30)
+- Cron: `5,30 6-16 * * *`
+- Runs at: 06:05, 06:30, 07:05, 07:30, ..., 16:05, 16:30
 - Fetches Instagram posts, TikTok posts, Instagram likes, and TikTok comments
-- Sends task notifications every hour
+- Sends task notifications when there are notable changes, plus hourly scheduled notifications during post-fetch period
 
 ### Engagement Only (17:30 - 22:00)
-- Runs every 30 minutes: 17:30, 18:00, 18:30, ..., 21:30, 22:00
-- Only fetches Instagram likes and TikTok comments (no posts)
-- No task notifications sent during this period
+- Cron gabungan: `30 17-21 * * *` + `0 18-22 * * *`
+- Runs at: 17:30, 18:00, 18:30, ..., 21:30, 22:00
+- Only refreshes Instagram likes and TikTok comments (no post fetch)
+- Notifications remain change-driven; hourly scheduled sends are limited to post-fetch period
+
+
+## Operational Notes
+
+- `telegramService` adalah wrapper WA untuk backward compatibility. Meski namanya `telegram`, implementasi saat ini dipakai untuk kanal logging/error ke WhatsApp admin.
+- Source of truth jadwal + flow notifikasi: [docs/notification_schedule_source_of_truth.md](docs/notification_schedule_source_of_truth.md).
+
+## Checklist Wajib Update Dokumentasi (Perubahan Fungsi/Modul)
+
+Setiap perubahan fungsi/module **wajib** mengaudit dan memperbarui dokumentasi terdampak:
+- `README.md`
+- `docs/business_process.md`
+- `docs/scheduled_notifications.md`
+- dokumen `docs/wa_*.md` yang relevan
+- `docs/notification_schedule_source_of_truth.md` jika jadwal/flow berubah
 
 ## Database Schema
 

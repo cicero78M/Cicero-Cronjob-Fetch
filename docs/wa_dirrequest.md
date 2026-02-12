@@ -1,5 +1,5 @@
 # Menu DirRequest untuk Operator WA
-*Last updated: 2026-01-22*
+*Last updated: 2026-02-12*
 
 Menu **dirrequest** digunakan tim Ditbinmas untuk memicu pengambilan data,
 rekap, dan laporan langsung dari WhatsApp. Menu utama menampilkan beberapa
@@ -65,11 +65,10 @@ dirrequest tanpa langkah tambahan.
 - Operator dapat menggunakan rentang ini ketika meninjau hasil fetch per shift
   atau ketika menyusun laporan khusus yang membutuhkan sumber data dengan
   timestamp eksekusi fetch yang eksplisit.
-- Setelah pukul **17.00 WIB**, cron fetch sosmed hanya menjalankan refresh
-  likes Instagram dan komentar TikTok tanpa menarik postingan baru. Slot
-  malam (mis. 18.00, 19.00, 20.00, 21.00, dan 20:30 gabungan) tetap aktif
-  untuk menjaga pembaruan engagement, tetapi pengambilan konten baru
-  dilewati kecuali dipaksa manual sebelum 17.00 WIB.
+- Setelah periode post-fetch berakhir, cron fetch sosmed hanya menjalankan refresh
+  likes Instagram dan komentar TikTok tanpa menarik postingan baru. Jadwal
+  aktualnya adalah `30 17-21 * * *` dan `0 18-22 * * *` (17:30 s.d. 22:00 WIB).
+  Pengambilan konten baru hanya aktif pada cron `5,30 6-16 * * *`.
 
 ## Absensi Likes Instagram (Format Dirrequest)
 - Rekap absensi likes Instagram (menu dirrequest untuk Direktorat) kini
@@ -637,3 +636,12 @@ berpindah ke dashboard web atau menjalankan skrip manual.
 - Menu rekap (**4️⃣0️⃣**, **4️⃣1️⃣**) hanya membaca database sehingga tetap dapat
   dipakai ketika RapidAPI tidak tersedia, selama data konten sudah ada di
   tabel yang disebutkan di atas.
+
+
+## Referensi Operasional
+- Jadwal dan alur notifikasi resmi untuk cron fetch sosmed dipusatkan di
+  [notification_schedule_source_of_truth.md](notification_schedule_source_of_truth.md).
+- `telegramService` dipakai sebagai wrapper WA logging/error demi backward compatibility.
+- Setiap perubahan fungsi/modul dirrequest yang berdampak ke jadwal/notifikasi
+  wajib disertai update dokumentasi terkait (`README`, `business_process`,
+  `scheduled_notifications`, dan dokumen `wa_*` yang terdampak).
