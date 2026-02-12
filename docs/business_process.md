@@ -1,5 +1,5 @@
 # Cicero Business Process
-*Last updated: 2025-06-25*
+*Last updated: 2026-02-12*
 
 This document summarizes the high level business processes of the Cicero platform, which consists of two main components: the **Cicero_V2** backend and the **Cicero_Web** dashboard.
 
@@ -11,9 +11,9 @@ This document summarizes the high level business processes of the Cicero platfor
 
 ## 2. Social Media Data Collection
 
-1. Cron jobs in Cicero_V2 run throughout the day to fetch Instagram and TikTok posts via RapidAPI.
-2. Fetched posts, profiles, likes, and comments are saved into the PostgreSQL database and cached in Redis.
-3. The system matches likes and comments with registered users to generate attendance reports.
+1. Cron `cronDirRequestFetchSosmed` berjalan terjadwal di zona Asia/Jakarta untuk dua fase: post-fetch period (`5,30 6-16 * * *`) dan engagement-only period (`30 17-21 * * *` + `0 18-22 * * *`).
+2. Pada post-fetch period, sistem mengambil post Instagram/TikTok sekaligus refresh likes/komentar; pada engagement-only period sistem hanya refresh likes/komentar.
+3. Hasil fetch disimpan ke PostgreSQL, lalu dipakai untuk attendance dan analytics.
 
 ## 3. Dashboard Analytics
 
@@ -23,9 +23,9 @@ This document summarizes the high level business processes of the Cicero platfor
 
 ## 4. Notifications & Reporting
 
-1. Scheduled jobs generate recap reports of likes and comments each day.
-2. Reports are automatically sent to administrators via WhatsApp using the `waService` module.
-3. Admins can also trigger manual fetches or report generation by sending specific WhatsApp commands.
+1. Notifikasi tugas dikirim saat ada perubahan penting atau saat slot hourly aktif selama jam post-fetch.
+2. Pengiriman log/error operasional tetap melalui WhatsApp admin; `telegramService` dipertahankan sebagai wrapper WA untuk backward compatibility.
+3. Admin juga dapat memicu proses manual tertentu dari command WhatsApp (dirrequest).
 
 ## 5. Queue Processing
 
@@ -48,3 +48,10 @@ flowchart TD
 The business process begins with client onboarding and continues with automated collection of social media metrics, attendance checks, and delivery of reports. Administrators interact mainly through the Next.js dashboard while the backend orchestrates data retrieval, persistence, and messaging tasks.
 
 Refer to [docs/naming_conventions.md](naming_conventions.md) for code style guidelines.
+
+## 7. Source of Truth Operasional
+
+Untuk menghindari salah interpretasi di sisi ops, jadwal cron dan flow notifikasi resmi dipusatkan di:
+- [docs/notification_schedule_source_of_truth.md](notification_schedule_source_of_truth.md)
+
+Saat ada perubahan fungsi/modul yang memengaruhi jadwal atau notifikasi, dokumen tersebut harus ikut diperbarui.
