@@ -27,16 +27,22 @@ The Baileys adapter now automatically detects and recovers from Bad MAC errors:
 
 ### Detection
 
-The adapter monitors for "Bad MAC" patterns in **two locations**:
+The adapter monitors for "Bad MAC" patterns in **three locations** (prioritized by detection order):
 
-1. **Connection-level errors**: During connection updates and disconnections
+1. **Logger-level errors** (NEW - Primary Detection): During libsignal/Baileys decryption
+   - Intercepts error-level logs from the Baileys library using Pino hooks
+   - Catches "Bad MAC" and "Failed to decrypt" messages
+   - Earliest possible detection - catches errors at the decryption layer
+   - Fastest response to session corruption issues
+
+2. **Connection-level errors**: During connection updates and disconnections
    - Error messages containing "Bad MAC"
    - Stack traces containing "Bad MAC"
+   - Secondary detection if errors cause connection issues
 
-2. **Message-level errors**: During message decryption and processing (NEW)
-   - Catches decryption failures that occur when processing incoming messages
-   - Provides earlier detection before connection-level failures
-   - Includes sender information for better diagnostics
+3. **Message-level errors**: During message transformation
+   - Logs any errors that occur while processing received messages
+   - Tertiary detection for edge cases
 
 ### Recovery Process
 
@@ -86,17 +92,22 @@ When recovery is triggered, the adapter automatically clears the session by:
 
 ### Log Messages
 
-**Detection at Connection Level:**
+**Detection at Logger Level (NEW - Primary):**
+```
+[BAILEYS] Bad MAC error detected in decryption layer (1/2): Failed to decrypt message with any known session
+[BAILEYS] Bad MAC error detected in decryption layer (2/2) [RAPID]: Bad MAC Error: Bad MAC
+[BAILEYS] Too many Bad MAC errors detected, scheduling reinitialization (reason: Rapid Bad MAC errors in decryption (0s between errors))
+```
+
+**Detection at Connection Level (Secondary):**
 ```
 [BAILEYS] Bad MAC error detected (1/2): Bad MAC Error: Bad MAC
 [BAILEYS] Bad MAC error detected (2/2) [RAPID]: Bad MAC Error: Bad MAC
 ```
 
-**Detection at Message Level (NEW):**
+**Detection at Message Level (Tertiary):**
 ```
-[BAILEYS] Bad MAC error during message decryption: Bad MAC Error: Bad MAC
-[BAILEYS] Bad MAC error in message handler (1/2) from 6281234567890@s.whatsapp.net
-[BAILEYS] Bad MAC error in message handler (2/2) [RAPID] from 6281234567890@s.whatsapp.net
+[BAILEYS] Error processing message: Bad MAC Error: Bad MAC from 6281234567890@s.whatsapp.net
 ```
 
 **Recovery Triggered:**
@@ -178,39 +189,91 @@ pm2 start cicero_v2
 
 - **File**: `src/service/baileysAdapter.js`
 - **Function**: `createBaileysClient()`
-- **Event Handler**: `sock.ev.on('connection.update')`
+- **Primary Detection**: Pino logger `hooks.logMethod` (lines 88-141)
+- **Secondary Detection**: `sock.ev.on('connection.update')` event handler
+- **Tertiary Detection**: `sock.ev.on('messages.upsert')` error catch block
 
 ### Error Detection Logic
 
+**Primary Detection (Logger Level):**
 ```javascript
-// Check for Bad MAC and session errors
-if (lastDisconnect?.error) {
-  const error = lastDisconnect.error;
-  const errorMessage = error?.message || String(error);
-  const errorStack = error?.stack || '';
+// Custom Pino logger that intercepts error messages
+const logger = P({
+  level: debugLoggingEnabled ? 'debug' : 'error',
+  timestamp: debugLoggingEnabled,
+  hooks: {
+    logMethod(inputArgs, method, level) {
+      // Intercept error-level logs to detect Bad MAC errors
+      if (level >= 50) { // 50 = error level in Pino
+        const firstArg = inputArgs[0];
+        let errorText = '';
+        
+        if (typeof firstArg === 'string') {
+          errorText = firstArg;
+        } else if (firstArg && typeof firstArg === 'object') {
+          errorText = firstArg.msg || firstArg.message || firstArg.err?.message || '';
+        }
+        
+        // Check for Bad MAC errors (case-insensitive)
+        const lowerText = errorText.toLowerCase();
+        if (lowerText.includes('bad mac') || lowerText.includes('failed to decrypt')) {
+          // Handle Bad MAC error asynchronously
+          setImmediate(() => handleBadMacError(errorText));
+        }
+      }
+      
+      // Continue with normal logging only if debug is enabled
+      if (debugLoggingEnabled) {
+        return method.apply(this, inputArgs);
+      }
+    }
+  }
+});
+
+const handleBadMacError = (errorMsg) => {
+  const now = Date.now();
+  const timeSinceLastError = lastMacErrorTime > 0 ? now - lastMacErrorTime : 0;
   
-  // Detect Bad MAC errors from libsignal - be specific to avoid false positives
+  // Reset counter if too much time has passed
+  if (timeSinceLastError > MAC_ERROR_RESET_TIMEOUT) {
+    consecutiveMacErrors = 0;
+  }
+  
+  consecutiveMacErrors++;
+  lastMacErrorTime = now;
+  
+  const isRapidError = timeSinceLastError > 0 && timeSinceLastError < MAC_ERROR_RAPID_THRESHOLD;
+  
+  // Trigger recovery if threshold reached or rapid errors detected
+  const shouldRecover = consecutiveMacErrors >= MAX_CONSECUTIVE_MAC_ERRORS || 
+                       (isRapidError && consecutiveMacErrors >= 1);
+  
+  if (shouldRecover && !reinitInProgress) {
+    // Schedule reinitialization asynchronously
+    setImmediate(async () => {
+      if (!reinitInProgress) {
+        await reinitializeClient(
+          'bad-mac-error-decryption',
+          reason,
+          { clearAuthSessionOverride: true }
+        );
+        consecutiveMacErrors = 0;
+        lastMacErrorTime = 0;
+      }
+    });
+  }
+};
+```
+
+**Secondary Detection (Connection Level):**
+```javascript
+// Check for Bad MAC and session errors during connection updates
+if (lastDisconnect?.error) {
   const isBadMacError = errorMessage.includes('Bad MAC') || 
                        errorStack.includes('Bad MAC');
   
   if (isBadMacError) {
-    consecutiveMacErrors++;
-    console.error(
-      `[BAILEYS] Bad MAC error detected (${consecutiveMacErrors}/${MAX_CONSECUTIVE_MAC_ERRORS}):`,
-      errorMessage
-    );
-    
-    // After threshold, reinitialize with session clear
-    if (consecutiveMacErrors >= MAX_CONSECUTIVE_MAC_ERRORS && !reinitInProgress) {
-      await reinitializeClient(
-        'bad-mac-error',
-        `${MAX_CONSECUTIVE_MAC_ERRORS} consecutive MAC failures`,
-        { clearAuthSessionOverride: true }
-      );
-      
-      // Reset counter only after reinit is triggered
-      consecutiveMacErrors = 0;
-    }
+    // Same recovery logic as logger-level detection
   }
 }
 ```
