@@ -12,8 +12,12 @@ import { detectChanges, hasNotableChanges } from "../service/tugasChangeDetector
 import { sendTugasNotification, buildChangeSummary } from "../service/tugasNotificationService.js";
 import { waGatewayClient } from "../service/waService.js";
 import { sendTelegramLog, sendTelegramError } from "../service/telegramService.js";
+import { acquireDistributedLock } from "../service/distributedLockService.js";
 
 const LOG_TAG = "CRON DIRFETCH SOSMED";
+const DISTRIBUTED_LOCK_KEY = "cron:dirfetch:sosmed";
+const CRON_MAX_RUN_MINUTES = 30;
+const LOCK_TTL_SECONDS = (CRON_MAX_RUN_MINUTES + 5) * 60;
 
 const lastStateByClient = new Map();
 const lastNotificationByClient = new Map();
@@ -122,6 +126,25 @@ function shouldSendHourlyNotifications() {
 
 export async function runCron(options = {}) {
   const { forceEngagementOnly = false } = options;
+  const runStartedAt = Date.now();
+  const distributedLock = await acquireDistributedLock({
+    key: DISTRIBUTED_LOCK_KEY,
+    ttlSeconds: LOCK_TTL_SECONDS,
+  });
+
+  if (!distributedLock.acquired) {
+    logMessage("lock", null, "lock_skipped", "skipped", null, null, "Distributed lock already held, skipping run", {
+      metric: "lock_skipped",
+      lockKey: DISTRIBUTED_LOCK_KEY,
+      reason: distributedLock.reason || "lock_held",
+    });
+    return;
+  }
+
+  logMessage("lock", null, "lock_acquired", "acquired", null, null, "Distributed lock acquired", {
+    metric: "lock_acquired",
+    lockKey: DISTRIBUTED_LOCK_KEY,
+  });
 
   if (isFetchInFlight) {
     logMessage("lock", null, "inFlight", "queued", null, null, "Run already in progress, skipping.");
@@ -310,6 +333,12 @@ export async function runCron(options = {}) {
       { name: err?.name, stack: err?.stack?.slice(0, 200) });
     await sendTelegramError(LOG_TAG, err);
   } finally {
+    const runDurationMs = Date.now() - runStartedAt;
+    logMessage("metric", null, "run_duration", "completed", null, null, `Cron duration ${runDurationMs}ms`, {
+      metric: "run_duration",
+      durationMs: runDurationMs,
+    });
+    await distributedLock.release();
     isFetchInFlight = false;
   }
 }

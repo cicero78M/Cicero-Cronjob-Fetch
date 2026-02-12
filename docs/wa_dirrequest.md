@@ -526,11 +526,14 @@ berpindah ke dashboard web atau menjalankan skrip manual.
 - Pesan *no changes* tetap dicetak ketika tidak ada konten baru atau ketika
   seluruh akun tidak berubah; log tersebut memuat `action=refresh_only` atau
   `result=no_change` sehingga admin tahu cron berjalan tetapi tidak ada delta.
-- Eksekusi fetch sosmed memakai single-flight lock dengan antrean rerun.
-  Jika ada pemanggilan baru ketika proses sebelumnya masih berjalan, cron
-  mencatat status `queued` (atau `coalesced` ketika sudah ada antrean), lalu
-  otomatis menjalankan ulang setelah proses aktif selesai sehingga workflow
-  tetap bergerak tanpa tumpang tindih.
+- Eksekusi fetch sosmed sekarang menambahkan **distributed lock Redis** dengan
+  key tetap `cron:dirfetch:sosmed` dan TTL `35 menit` (sedikit di atas durasi
+  maksimum run 30 menit). Jika lock masih dipegang instance lain, proses
+  langsung berhenti dengan log metric `lock_skipped`.
+- Setelah lock berhasil diambil, cron tetap memakai penjaga proses lokal
+  (`isFetchInFlight`) untuk mencegah overlap di proses Node.js yang sama.
+- Pada blok `finally`, lock Redis selalu dilepas dan cron mencatat metrik
+  `run_duration` agar durasi total eksekusi tetap terpantau.
 - Contoh log WhatsApp/debug:
   - **Sukses kirim** ke grup: `cronDirRequestFetchSosmed | clientId=DITBINMAS`
     `action=fetch_dirrequest result=sent countsBefore=ig:12/tk:9`
