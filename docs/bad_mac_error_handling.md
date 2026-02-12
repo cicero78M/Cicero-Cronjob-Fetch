@@ -232,23 +232,29 @@ const logger = P({
 
 const handleBadMacError = (errorMsg) => {
   const now = Date.now();
-  const timeSinceLastError = lastMacErrorTime > 0 ? now - lastMacErrorTime : 0;
+  const previousErrorTime = lastMacErrorTime; // Store previous time
+  const timeSinceLastError = previousErrorTime > 0 ? now - previousErrorTime : 0;
   
-  // Reset counter if too much time has passed
-  if (timeSinceLastError > MAC_ERROR_RESET_TIMEOUT) {
+  // Reset counter if too much time has passed (more than 60 seconds)
+  if (previousErrorTime > 0 && timeSinceLastError > MAC_ERROR_RESET_TIMEOUT) {
     consecutiveMacErrors = 0;
   }
   
   consecutiveMacErrors++;
   lastMacErrorTime = now;
   
-  const isRapidError = timeSinceLastError > 0 && timeSinceLastError < MAC_ERROR_RAPID_THRESHOLD;
+  // Check if this is a rapid error (within 5 seconds of previous error)
+  const isRapidError = previousErrorTime > 0 && timeSinceLastError < MAC_ERROR_RAPID_THRESHOLD;
   
   // Trigger recovery if threshold reached or rapid errors detected
   const shouldRecover = consecutiveMacErrors >= MAX_CONSECUTIVE_MAC_ERRORS || 
                        (isRapidError && consecutiveMacErrors >= 1);
   
   if (shouldRecover && !reinitInProgress) {
+    const reason = isRapidError 
+      ? `Rapid Bad MAC errors in decryption (${Math.round(timeSinceLastError/1000)}s between errors)`
+      : `${MAX_CONSECUTIVE_MAC_ERRORS} consecutive MAC failures in decryption`;
+    
     // Schedule reinitialization asynchronously
     setImmediate(async () => {
       if (!reinitInProgress) {

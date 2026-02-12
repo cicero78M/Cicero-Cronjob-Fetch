@@ -169,7 +169,8 @@ export async function createBaileysClient(clientId = 'wa-admin') {
         if (debugLoggingEnabled) {
           return method.apply(this, inputArgs);
         }
-        // Suppress logging if debug is disabled
+        // Explicitly return undefined to suppress logging when debug is disabled
+        return undefined;
       }
     }
   });
