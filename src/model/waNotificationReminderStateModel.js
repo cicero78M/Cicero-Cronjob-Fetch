@@ -62,3 +62,79 @@ export async function deleteReminderStateForDate(dateKey) {
   );
   return res.rowCount || 0;
 }
+
+function normalizeClientId(clientId) {
+  return String(clientId || '').trim().toUpperCase();
+}
+
+function normalizeSchedulerStateRow(row) {
+  const clientId = normalizeClientId(row.client_id);
+  return {
+    clientId,
+    lastIgCount: Number(row.last_ig_count || 0),
+    lastTiktokCount: Number(row.last_tiktok_count || 0),
+    lastNotifiedAt: row.last_notified_at || null,
+  };
+}
+
+export async function getSchedulerStateMapByClientIds(clientIds = []) {
+  const normalizedIds = Array.from(
+    new Set(
+      (clientIds || [])
+        .map((clientId) => normalizeClientId(clientId))
+        .filter(Boolean)
+    )
+  );
+
+  if (normalizedIds.length === 0) {
+    return new Map();
+  }
+
+  const res = await query(
+    `SELECT client_id, last_ig_count, last_tiktok_count, last_notified_at
+     FROM wa_notification_scheduler_state
+     WHERE client_id = ANY($1::text[])`,
+    [normalizedIds]
+  );
+
+  const stateMap = new Map();
+  res.rows.forEach((row) => {
+    const state = normalizeSchedulerStateRow(row);
+    stateMap.set(state.clientId, state);
+  });
+
+  return stateMap;
+}
+
+export async function upsertSchedulerState({
+  clientId,
+  lastIgCount,
+  lastTiktokCount,
+  lastNotifiedAt,
+}) {
+  const normalizedClientId = normalizeClientId(clientId);
+  if (!normalizedClientId) return null;
+
+  const lastIgValue = Number(lastIgCount || 0);
+  const lastTiktokValue = Number(lastTiktokCount || 0);
+  const notifiedAtValue = lastNotifiedAt || null;
+
+  const res = await query(
+    `INSERT INTO wa_notification_scheduler_state (
+      client_id,
+      last_ig_count,
+      last_tiktok_count,
+      last_notified_at
+    )
+    VALUES ($1, $2, $3, $4)
+    ON CONFLICT (client_id) DO UPDATE
+      SET last_ig_count = EXCLUDED.last_ig_count,
+          last_tiktok_count = EXCLUDED.last_tiktok_count,
+          last_notified_at = EXCLUDED.last_notified_at,
+          updated_at = NOW()
+    RETURNING client_id, last_ig_count, last_tiktok_count, last_notified_at`,
+    [normalizedClientId, lastIgValue, lastTiktokValue, notifiedAtValue]
+  );
+
+  return normalizeSchedulerStateRow(res.rows[0]);
+}

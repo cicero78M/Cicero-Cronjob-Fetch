@@ -13,14 +13,16 @@ import { sendTugasNotification, buildChangeSummary } from "../service/tugasNotif
 import { waGatewayClient } from "../service/waService.js";
 import { sendTelegramLog, sendTelegramError } from "../service/telegramService.js";
 import { acquireDistributedLock } from "../service/distributedLockService.js";
+import {
+  getSchedulerStateMapByClientIds,
+  upsertSchedulerState,
+} from "../model/waNotificationReminderStateModel.js";
 
 const LOG_TAG = "CRON DIRFETCH SOSMED";
 const DISTRIBUTED_LOCK_KEY = "cron:dirfetch:sosmed";
 const CRON_MAX_RUN_MINUTES = 30;
 const LOCK_TTL_SECONDS = (CRON_MAX_RUN_MINUTES + 5) * 60;
 
-const lastStateByClient = new Map();
-const lastNotificationByClient = new Map();
 let isFetchInFlight = false;
 
 // Notification interval: 1 hour (in milliseconds)
@@ -29,40 +31,52 @@ const SECONDS_PER_MINUTE = 60;
 const MS_PER_SECOND = 1000;
 const NOTIFICATION_INTERVAL_MS = MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PER_SECOND; // 1 hour
 
+function normalizeClientId(clientId) {
+  return String(clientId || "").trim().toUpperCase();
+}
+
+function toIsoOrNull(value) {
+  if (!value) return null;
+  const asDate = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(asDate.getTime())) return null;
+  return asDate.toISOString();
+}
+
+function buildFallbackState(clientId) {
+  return {
+    clientId,
+    lastIgCount: null,
+    lastTiktokCount: null,
+    lastNotifiedAt: null,
+  };
+}
+
 /**
  * Check if enough time has passed since last notification for a client
- * @param {string} clientId - Client ID
+ * @param {object} schedulerState - scheduler state for client
  * @returns {boolean} True if 1 hour has passed since last notification
  */
-function shouldSendHourlyNotification(clientId) {
-  const lastNotificationTime = lastNotificationByClient.get(clientId);
-  
+function shouldSendHourlyNotification(schedulerState) {
+  const lastNotificationTimeIso = toIsoOrNull(schedulerState?.lastNotifiedAt);
+
   // If no previous notification, send one
-  if (!lastNotificationTime) {
+  if (!lastNotificationTimeIso) {
     return true;
   }
-  
+
   const now = Date.now();
-  const timeSinceLastNotification = now - lastNotificationTime;
-  
+  const timeSinceLastNotification = now - new Date(lastNotificationTimeIso).getTime();
+
   // Send if 1 hour has passed
   return timeSinceLastNotification >= NOTIFICATION_INTERVAL_MS;
 }
 
-/**
- * Update the last notification timestamp for a client
- * @param {string} clientId - Client ID
- */
-function updateLastNotificationTime(clientId) {
-  lastNotificationByClient.set(clientId, Date.now());
-}
-
 function logMessage(phase, clientId, action, result, countsBefore, countsAfter, message = "", meta = {}) {
   const prefix = `[${LOG_TAG}]${clientId ? `[${clientId}]` : ""}[${phase}]`;
-  const countText = countsBefore && countsAfter 
+  const countText = countsBefore && countsAfter
     ? `IG ${countsBefore.ig || 0}→${countsAfter.ig || 0} | TikTok ${countsBefore.tiktok || 0}→${countsAfter.tiktok || 0}`
     : "";
-  
+
   const details = [
     action ? `action=${action}` : null,
     result ? `result=${result}` : null,
@@ -76,24 +90,27 @@ function logMessage(phase, clientId, action, result, countsBefore, countsAfter, 
   console.log(`${prefix} ${details}`.trim());
 }
 
-async function ensureClientState(clientId) {
-  const normalizedId = String(clientId || "").trim().toUpperCase();
-  if (lastStateByClient.has(normalizedId)) {
-    return lastStateByClient.get(normalizedId);
+function resolveCountsBefore(schedulerState, countsAfter, storageHealthy) {
+  if (!storageHealthy || schedulerState.lastIgCount === null || schedulerState.lastTiktokCount === null) {
+    return {
+      ig: countsAfter.ig,
+      tiktok: countsAfter.tiktok,
+    };
   }
 
-  const [igCount, tiktokCount] = await Promise.all([
-    getInstaPostCount(normalizedId),
-    getTiktokPostCount(normalizedId),
-  ]);
-
-  const initialState = {
-    igCount,
-    tiktokCount,
+  return {
+    ig: schedulerState.lastIgCount,
+    tiktok: schedulerState.lastTiktokCount,
   };
+}
 
-  lastStateByClient.set(normalizedId, initialState);
-  return initialState;
+function buildNextSchedulerState(schedulerState, countsAfter, notificationSent) {
+  return {
+    clientId: schedulerState.clientId,
+    lastIgCount: countsAfter.ig,
+    lastTiktokCount: countsAfter.tiktok,
+    lastNotifiedAt: notificationSent ? new Date().toISOString() : toIsoOrNull(schedulerState.lastNotifiedAt),
+  };
 }
 
 /**
@@ -105,7 +122,7 @@ function shouldFetchPosts() {
   const now = new Date();
   // Get current hour in Jakarta timezone (UTC+7)
   const jakartaHour = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' })).getHours();
-  
+
   // Check if hour is between 6 and 16 (allows jobs scheduled at 06:00, 06:30, ..., 16:30)
   return jakartaHour >= 6 && jakartaHour < 17;
 }
@@ -119,7 +136,7 @@ function shouldSendHourlyNotifications() {
   const now = new Date();
   // Get current hour in Jakarta timezone (UTC+7)
   const jakartaHour = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' })).getHours();
-  
+
   // Check if hour is between 6 and 16 (allows notifications during post fetch period)
   return jakartaHour >= 6 && jakartaHour < 17;
 }
@@ -157,15 +174,15 @@ export async function runCron(options = {}) {
     // Determine if we should fetch posts based on time
     const isPostFetchTime = shouldFetchPosts();
     const skipPostFetch = forceEngagementOnly || !isPostFetchTime;
-    
-    const timeBasedMessage = isPostFetchTime 
-      ? "post fetch period (last run 17:03)" 
+
+    const timeBasedMessage = isPostFetchTime
+      ? "post fetch period (last run 17:03)"
       : "engagement only period (17:30-22:00)";
-    
-    logMessage("start", null, "cron", "start", null, null, "", { 
-      forceEngagementOnly, 
+
+    logMessage("start", null, "cron", "start", null, null, "", {
+      forceEngagementOnly,
       skipPostFetch,
-      timeBasedMessage 
+      timeBasedMessage
     });
     await sendTelegramLog("INFO", `🚀 Cron job started: ${LOG_TAG} - ${timeBasedMessage}${forceEngagementOnly ? " (forced engagement only)" : ""}`);
 
@@ -177,67 +194,79 @@ export async function runCron(options = {}) {
       return;
     }
 
+    let schedulerStateByClient = new Map();
+    let stateStorageHealthy = true;
+    const activeClientIds = activeClients.map((client) => normalizeClientId(client.client_id)).filter(Boolean);
+
+    try {
+      schedulerStateByClient = await getSchedulerStateMapByClientIds(activeClientIds);
+    } catch (storageErr) {
+      stateStorageHealthy = false;
+      logMessage("stateStorage", null, "loadSchedulerState", "warning", null, null,
+        "Failed to load scheduler state. Falling back to conservative notification behavior.", {
+          name: storageErr?.name,
+          message: storageErr?.message,
+        });
+      await sendTelegramError(`${LOG_TAG}: Failed loading scheduler state`, storageErr);
+    }
+
     logMessage("init", null, "loadClients", "loaded", null, null, `Processing ${activeClients.length} clients`);
 
     for (const client of activeClients) {
       try {
-        const clientId = String(client.client_id || "").trim().toUpperCase();
+        const clientId = normalizeClientId(client.client_id);
         const hasInstagram = client?.client_insta_status !== false;
         const hasTiktok = client?.client_tiktok_status !== false;
-        const previousState = await ensureClientState(clientId);
-        
-        const countsBefore = {
-          ig: previousState.igCount,
-          tiktok: previousState.tiktokCount,
-        };
+        const schedulerState = schedulerStateByClient.get(clientId) || buildFallbackState(clientId);
 
         // Fetch Instagram posts
         if (!skipPostFetch && hasInstagram) {
-          logMessage("instagramFetch", clientId, "fetchInstagram", "start", countsBefore, null);
+          logMessage("instagramFetch", clientId, "fetchInstagram", "start", null, null);
           await fetchAndStoreInstaContent(
             ["shortcode", "caption", "like_count", "timestamp"],
             null,
             null,
             clientId
           );
-          logMessage("instagramFetch", clientId, "fetchInstagram", "completed", countsBefore, null);
+          logMessage("instagramFetch", clientId, "fetchInstagram", "completed", null, null);
         } else {
-          logMessage("instagramFetch", clientId, "fetchInstagram", "skipped", countsBefore, null, 
+          logMessage("instagramFetch", clientId, "fetchInstagram", "skipped", null, null,
             !hasInstagram ? "Instagram account inactive" : "forceEngagementOnly=true");
         }
 
         // Fetch TikTok posts
         if (!skipPostFetch && hasTiktok) {
-          logMessage("tiktokFetch", clientId, "fetchTiktok", "start", countsBefore, null);
+          logMessage("tiktokFetch", clientId, "fetchTiktok", "start", null, null);
           await fetchAndStoreTiktokContent(clientId);
-          logMessage("tiktokFetch", clientId, "fetchTiktok", "completed", countsBefore, null);
+          logMessage("tiktokFetch", clientId, "fetchTiktok", "completed", null, null);
         } else {
-          logMessage("tiktokFetch", clientId, "fetchTiktok", "skipped", countsBefore, null,
+          logMessage("tiktokFetch", clientId, "fetchTiktok", "skipped", null, null,
             !hasTiktok ? "TikTok account inactive" : "forceEngagementOnly=true");
         }
 
         // Fetch Instagram likes
         if (hasInstagram) {
-          logMessage("likesRefresh", clientId, "refreshLikes", "start", countsBefore, null);
+          logMessage("likesRefresh", clientId, "refreshLikes", "start", null, null);
           await handleFetchLikesInstagram(null, null, clientId);
-          logMessage("likesRefresh", clientId, "refreshLikes", "completed", countsBefore, null);
+          logMessage("likesRefresh", clientId, "refreshLikes", "completed", null, null);
         } else {
-          logMessage("likesRefresh", clientId, "refreshLikes", "skipped", countsBefore, null, 
+          logMessage("likesRefresh", clientId, "refreshLikes", "skipped", null, null,
             "Instagram account inactive");
         }
 
         // Fetch TikTok comments
-        logMessage("commentRefresh", clientId, "refreshComments", "start", countsBefore, null);
+        logMessage("commentRefresh", clientId, "refreshComments", "start", null, null);
         await handleFetchKomentarTiktokBatch(null, null, clientId);
-        logMessage("commentRefresh", clientId, "refreshComments", "completed", countsBefore, null);
+        logMessage("commentRefresh", clientId, "refreshComments", "completed", null, null);
 
-        // Get updated counts
+        // Get updated counts after successful fetch+refresh
         const [igCount, tiktokCount] = await Promise.all([
           getInstaPostCount(clientId),
           getTiktokPostCount(clientId),
         ]);
 
         const countsAfter = { ig: igCount, tiktok: tiktokCount };
+        const countsBefore = resolveCountsBefore(schedulerState, countsAfter, stateStorageHealthy);
 
         // Detect changes for WhatsApp notification
         const changes = await detectChanges(
@@ -246,57 +275,45 @@ export async function runCron(options = {}) {
           clientId
         );
 
-        // Update state
-        const nextState = {
-          igCount,
-          tiktokCount,
-        };
-        lastStateByClient.set(clientId, nextState);
-
         logMessage("fetchComplete", clientId, "fetchComplete", "completed", countsBefore, countsAfter,
           "Social media fetch completed successfully");
 
         // Check if it's time for hourly notification (during post fetch period, last run 16:30)
         const isNotificationTime = shouldSendHourlyNotifications();
-        const shouldSendHourly = isNotificationTime && shouldSendHourlyNotification(clientId);
+        const shouldSendHourly = isNotificationTime && shouldSendHourlyNotification(schedulerState);
         const hasChanges = hasNotableChanges(changes);
-        
-        // Send WhatsApp notification if:
-        // 1. There are notable changes (original behavior), OR
-        // 2. 1 hour has passed since last notification AND within post fetch period (hourly notifications)
-        if (hasChanges || shouldSendHourly) {
+        let notificationSent = false;
+
+        // conservative fallback if state storage unavailable: don't do hourly-only sends
+        const shouldNotify = stateStorageHealthy ? (hasChanges || shouldSendHourly) : hasChanges;
+
+        if (shouldNotify) {
           const changeSummary = buildChangeSummary(changes);
-          const notificationReason = shouldSendHourly 
+          const notificationReason = shouldSendHourly
             ? `Hourly notification (${hasChanges ? 'with changes: ' + changeSummary : 'no changes'})`
             : `Changes detected: ${changeSummary}`;
-          
+
           logMessage("waNotification", clientId, "sendNotification", "start", countsBefore, countsAfter,
             `Sending WA notification: ${notificationReason}`);
 
           try {
-            // Use only waGatewayClient for task notifications
             if (waGatewayClient) {
               const notificationOptions = {
                 forceScheduled: shouldSendHourly,
                 igCount: countsAfter.ig,
                 tiktokCount: countsAfter.tiktok
               };
-              
-              const notificationSent = await sendTugasNotification(
-                waGatewayClient, 
-                clientId, 
+
+              notificationSent = await sendTugasNotification(
+                waGatewayClient,
+                clientId,
                 changes,
                 notificationOptions
               );
-              
+
               if (notificationSent) {
-                // Update last notification time only if notification was actually sent
-                updateLastNotificationTime(clientId);
-                
                 logMessage("waNotification", clientId, "sendNotification", "completed", countsBefore, countsAfter,
                   `WA notification sent: ${notificationReason}`);
-                
-                // Send success log to Telegram
                 await sendTelegramLog("INFO", `Task notification sent for client ${clientId}: ${notificationReason}`);
               } else {
                 logMessage("waNotification", clientId, "sendNotification", "skipped", countsBefore, countsAfter,
@@ -313,12 +330,28 @@ export async function runCron(options = {}) {
           }
         } else {
           logMessage("waNotification", clientId, "sendNotification", "skipped", countsBefore, countsAfter,
-            "No notable changes detected and not time for hourly notification");
+            stateStorageHealthy
+              ? "No notable changes detected and not time for hourly notification"
+              : "State storage unavailable, hourly notifications disabled (conservative mode)");
         }
 
+        const nextSchedulerState = buildNextSchedulerState(schedulerState, countsAfter, notificationSent);
+        if (stateStorageHealthy) {
+          try {
+            const persistedState = await upsertSchedulerState(nextSchedulerState);
+            schedulerStateByClient.set(clientId, persistedState || nextSchedulerState);
+          } catch (upsertErr) {
+            logMessage("stateStorage", clientId, "saveSchedulerState", "warning", countsBefore, countsAfter,
+              "Failed to persist scheduler state after client processing", {
+                name: upsertErr?.name,
+                message: upsertErr?.message,
+              });
+            await sendTelegramError(`${LOG_TAG}: Failed saving scheduler state for ${clientId}`, upsertErr);
+          }
+        }
       } catch (clientErr) {
-        const clientId = String(client?.client_id || "").trim().toUpperCase();
-        logMessage("client", clientId, "processClient", "error", null, null, 
+        const clientId = normalizeClientId(client?.client_id);
+        logMessage("client", clientId, "processClient", "error", null, null,
           clientErr?.message || String(clientErr),
           { name: clientErr?.name, stack: clientErr?.stack?.slice(0, 200) });
         await sendTelegramError(`${LOG_TAG}: Client ${clientId}`, clientErr);
@@ -366,9 +399,9 @@ scheduleCronJob(JOB_KEY + ":post-fetch", POST_FETCH_SCHEDULE, runCron, CRON_OPTI
 // Schedule engagement only jobs (17:30 to 22:00)
 ENGAGEMENT_ONLY_SCHEDULES.forEach((schedule, index) => {
   scheduleCronJob(
-    JOB_KEY + `:engagement-only-${index}`, 
-    schedule, 
-    () => runCron({ forceEngagementOnly: true }), 
+    JOB_KEY + `:engagement-only-${index}`,
+    schedule,
+    () => runCron({ forceEngagementOnly: true }),
     CRON_OPTIONS
   );
 });
