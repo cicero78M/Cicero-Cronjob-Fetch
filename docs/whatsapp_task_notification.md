@@ -207,6 +207,29 @@ State sekarang dipersistenkan ke tabel PostgreSQL `wa_notification_scheduler_sta
 4. Jika notifikasi berhasil terkirim, `last_notified_at` diupdate ke timestamp saat ini.
 5. State terbaru di-upsert per client (satu query `INSERT ... ON CONFLICT ... DO UPDATE`) sehingga update bersifat atomik di level row.
 
+
+## Pengaturan Concurrency & Deadline `runCron`
+
+`runCron` pada `src/cron/cronDirRequestFetchSosmed.js` sekarang memakai pola berikut:
+
+- Proses per client dipisah ke fungsi `processClient(client, options)`.
+- Intake client dibatasi dengan `p-limit` (default `clientConcurrency = 4`) supaya throughput stabil tanpa membebani API eksternal secara berlebihan.
+- Ditambahkan guard `maxRunDurationMs` (default 28 menit) + buffer intake (`DEADLINE_INTAKE_BUFFER_MS`) agar worker berhenti menerima client baru saat runtime mendekati batas.
+- Metrik baru pada log:
+  - `processed_count`
+  - `skipped_due_to_deadline`
+  - `client_duration` per client
+- Jika durasi aktual sering mendekati `maxRunDurationMs` (>= 80%), sistem menulis warning baseline agar interval cron bisa dievaluasi (mis. dinaikkan dari 30 menit, atau workload per run dikurangi).
+
+### Tuning yang disarankan
+
+1. Mulai dari concurrency 3-5 (default saat ini 4).
+2. Pantau distribusi `client_duration` untuk menemukan bottleneck API eksternal.
+3. Bila `skipped_due_to_deadline` sering > 0, pertimbangkan:
+   - menaikkan interval cron,
+   - menurunkan scope kerja per run, atau
+   - menambah worker terdistribusi dengan lock yang tetap aman.
+
 ### Fallback saat storage state down
 
 Jika query state gagal (misalnya database sementara down):
