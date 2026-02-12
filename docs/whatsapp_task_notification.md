@@ -87,6 +87,13 @@ Format group ID WhatsApp harus:
    - Integrasi dengan sistem deteksi perubahan
    - Pengiriman notifikasi setelah fetch selesai
    - Logging status notifikasi
+   - Memuat state scheduler dari PostgreSQL sebelum proses client
+   - Menyimpan state terbaru (`last_ig_count`, `last_tiktok_count`, `last_notified_at`) secara atomik setelah proses client
+
+4. **src/model/waNotificationReminderStateModel.js** (Extended)
+   - Menyediakan akses state scheduler WA (`wa_notification_scheduler_state`)
+   - Fungsi bulk-read state per `client_id`
+   - Fungsi upsert state scheduler pasca proses client
 
 ### Dependencies Baru
 
@@ -180,3 +187,31 @@ await runCron();
 - Monitor log secara berkala untuk error
 - Update `client_group` jika grup diganti
 - Pastikan database terindeks dengan baik untuk query perubahan
+
+
+## Persistensi State Scheduler
+
+State `lastStateByClient` dan `lastNotificationByClient` tidak lagi disimpan in-memory.
+State sekarang dipersistenkan ke tabel PostgreSQL `wa_notification_scheduler_state` dengan kolom:
+
+- `client_id`
+- `last_ig_count`
+- `last_tiktok_count`
+- `last_notified_at`
+
+### Alur state pada `runCron`
+
+1. Saat run dimulai, worker memuat state semua `client_id` aktif dari database.
+2. Worker tetap menjalankan fetch post + refresh engagement seperti biasa.
+3. Setelah fetch selesai, perubahan dihitung dari state tersimpan vs hitungan terbaru.
+4. Jika notifikasi berhasil terkirim, `last_notified_at` diupdate ke timestamp saat ini.
+5. State terbaru di-upsert per client (satu query `INSERT ... ON CONFLICT ... DO UPDATE`) sehingga update bersifat atomik di level row.
+
+### Fallback saat storage state down
+
+Jika query state gagal (misalnya database sementara down):
+
+- Cron **tetap memproses fetch** konten/engagement semua client.
+- Perhitungan delta memakai baseline konservatif (`counts_before = counts_after`) agar tidak memicu blast notifikasi berkala tanpa state valid.
+- Mode hourly-only notification dinonaktifkan sementara (hanya kirim jika benar-benar terdeteksi perubahan signifikan dari data yang tersedia).
+- Error state storage dilaporkan ke Telegram untuk observability.
