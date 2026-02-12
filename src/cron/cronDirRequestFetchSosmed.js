@@ -10,8 +10,7 @@ import { handleFetchLikesInstagram } from "../handler/fetchengagement/fetchLikes
 import { fetchAndStoreTiktokContent } from "../handler/fetchpost/tiktokFetchPost.js";
 import { handleFetchKomentarTiktokBatch } from "../handler/fetchengagement/fetchCommentTiktok.js";
 import { detectChanges, hasNotableChanges } from "../service/tugasChangeDetector.js";
-import { sendTugasNotification, buildChangeSummary } from "../service/tugasNotificationService.js";
-import { waGatewayClient } from "../service/waService.js";
+import { enqueueTugasNotification, buildChangeSummary } from "../service/tugasNotificationService.js";
 import { sendTelegramLog, sendTelegramError } from "../service/telegramService.js";
 import { acquireDistributedLock } from "../service/distributedLockService.js";
 import {
@@ -235,31 +234,32 @@ export async function processClient(client, options = {}) {
       `Sending WA notification: ${notificationReason}`);
 
     try {
-      if (waGatewayClient) {
-        const notificationOptions = {
-          forceScheduled: shouldSendHourly,
-          igCount: countsAfter.ig,
-          tiktokCount: countsAfter.tiktok
-        };
+      const notificationOptions = {
+        forceScheduled: shouldSendHourly,
+        igCount: countsAfter.ig,
+        tiktokCount: countsAfter.tiktok,
+      };
 
-        notificationSent = await sendTugasNotification(
-          waGatewayClient,
-          clientId,
-          changes,
-          notificationOptions
-        );
+      const enqueueResult = await enqueueTugasNotification(
+        clientId,
+        changes,
+        notificationOptions
+      );
 
-        if (notificationSent) {
-          logMessage("waNotification", clientId, "sendNotification", "completed", countsBefore, countsAfter,
-            `WA notification sent: ${notificationReason}`);
-          await sendTelegramLog("INFO", `Task notification sent for client ${clientId}: ${notificationReason}`);
-        } else {
-          logMessage("waNotification", clientId, "sendNotification", "skipped", countsBefore, countsAfter,
-            "No group configured or no message sent");
-        }
+      notificationSent = enqueueResult.enqueuedCount > 0;
+
+      if (notificationSent) {
+        logMessage("waNotification", clientId, "enqueueNotification", "completed", countsBefore, countsAfter,
+          `Outbox notification queued: ${notificationReason}`, {
+            enqueuedCount: enqueueResult.enqueuedCount,
+            duplicatedCount: enqueueResult.duplicatedCount,
+          });
+        await sendTelegramLog("INFO", `Task notification queued for client ${clientId}: ${notificationReason}`);
       } else {
-        logMessage("waNotification", clientId, "sendNotification", "skipped", countsBefore, countsAfter,
-          "WhatsApp client not available");
+        logMessage("waNotification", clientId, "enqueueNotification", "skipped", countsBefore, countsAfter,
+          "No group configured, no message generated, or all events were duplicates", {
+            duplicatedCount: enqueueResult.duplicatedCount,
+          });
       }
     } catch (waErr) {
       logMessage("waNotification", clientId, "sendNotification", "error", countsBefore, countsAfter,

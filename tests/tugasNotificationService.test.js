@@ -19,12 +19,17 @@ jest.unstable_mockModule('../src/model/tiktokPostModel.js', () => ({
   getPostsTodayByClient: jest.fn(),
 }));
 
+jest.unstable_mockModule('../src/model/waNotificationOutboxModel.js', () => ({
+  enqueueOutboxEvents: jest.fn(),
+}));
+
 // Import after mocking
-const { sendTugasNotification, buildChangeSummary } = await import('../src/service/tugasNotificationService.js');
+const { sendTugasNotification, buildChangeSummary, enqueueTugasNotification } = await import('../src/service/tugasNotificationService.js');
 const { findById } = await import('../src/model/clientModel.js');
 const { safeSendMessage } = await import('../src/utils/waHelper.js');
 const { getPostsTodayByClient: getPostsTodayByClientInsta } = await import('../src/model/instaPostModel.js');
 const { getPostsTodayByClient: getPostsTodayByClientTiktok } = await import('../src/model/tiktokPostModel.js');
+const { enqueueOutboxEvents } = await import('../src/model/waNotificationOutboxModel.js');
 
 describe('tugasNotificationService', () => {
   beforeEach(() => {
@@ -374,5 +379,41 @@ describe('tugasNotificationService', () => {
         expect.stringContaining('https://www.tiktok.com/@testuser/video/tiktok456')
       );
     });
+  });
+});
+
+
+describe('enqueueTugasNotification', () => {
+  const mockClient = {
+    client_id: 'TEST_CLIENT',
+    nama: 'Test Client',
+    client_group: '120363123456789@g.us',
+  };
+
+  beforeEach(() => {
+    findById.mockResolvedValue(mockClient);
+    enqueueOutboxEvents.mockResolvedValue({ insertedCount: 1, duplicatedCount: 0 });
+    getPostsTodayByClientInsta.mockResolvedValue([]);
+    getPostsTodayByClientTiktok.mockResolvedValue([]);
+  });
+
+  it('enqueues notification events to outbox', async () => {
+    const result = await enqueueTugasNotification('TEST_CLIENT', {
+      igAdded: [{ shortcode: 'abc123', caption: 'Test' }],
+      tiktokAdded: [],
+      igDeleted: 0,
+      tiktokDeleted: 0,
+      linkChanges: [],
+    });
+
+    expect(result).toEqual({ enqueuedCount: 1, duplicatedCount: 0 });
+    expect(enqueueOutboxEvents).toHaveBeenCalledTimes(1);
+    expect(enqueueOutboxEvents).toHaveBeenCalledWith([
+      expect.objectContaining({
+        clientId: 'TEST_CLIENT',
+        groupId: '120363123456789@g.us',
+        maxAttempts: 5,
+      }),
+    ]);
   });
 });

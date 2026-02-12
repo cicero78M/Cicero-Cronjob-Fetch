@@ -588,6 +588,43 @@ BEFORE UPDATE ON wa_notification_reminder_state
 FOR EACH ROW
 EXECUTE PROCEDURE set_wa_notification_reminder_state_updated_at();
 
+CREATE TABLE IF NOT EXISTS wa_notification_outbox (
+  outbox_id BIGSERIAL PRIMARY KEY,
+  client_id TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  message TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 5,
+  sent_at TIMESTAMP WITH TIME ZONE,
+  error_message TEXT,
+  next_attempt_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  last_attempt_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_wa_notification_outbox_dispatch
+  ON wa_notification_outbox (status, next_attempt_at, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_wa_notification_outbox_client
+  ON wa_notification_outbox (client_id, status);
+
+CREATE OR REPLACE FUNCTION set_wa_notification_outbox_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS wa_notification_outbox_set_updated_at ON wa_notification_outbox;
+CREATE TRIGGER wa_notification_outbox_set_updated_at
+BEFORE UPDATE ON wa_notification_outbox
+FOR EACH ROW
+EXECUTE PROCEDURE set_wa_notification_outbox_updated_at();
+
 CREATE TABLE IF NOT EXISTS cron_job_config (
   job_key TEXT PRIMARY KEY,
   display_name TEXT NOT NULL,
@@ -620,7 +657,8 @@ VALUES
     ('./src/cron/cronWaNotificationReminder.js', 'Ditbinmas Task Reminder'),
     ('./src/cron/cronDirRequestSatbinmasOfficialMedia.js', 'Satbinmas Official Media Recap'),
     ('./src/cron/cronDirRequestBidhumasEvening.js', 'Bidhumas Evening Menu 6 & 9'),
-    ('./src/cron/cronOprRequestAbsensiEngagement.js', 'Oprrequest Engagement Absensi')
+    ('./src/cron/cronOprRequestAbsensiEngagement.js', 'Oprrequest Engagement Absensi'),
+    ('./src/cron/cronWaOutboxWorker.js', 'WhatsApp Notification Outbox Worker')
 ON CONFLICT (job_key) DO NOTHING;
 
 -- No additional setup steps required beyond applying this schema.
