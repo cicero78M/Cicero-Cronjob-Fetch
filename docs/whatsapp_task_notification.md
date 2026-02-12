@@ -85,12 +85,24 @@ Format group ID WhatsApp harus:
 
 3. **src/cron/cronDirRequestFetchSosmed.js** (Modified)
    - Integrasi dengan sistem deteksi perubahan
-   - Pengiriman notifikasi setelah fetch selesai
-   - Logging status notifikasi
+   - Enqueue notifikasi ke outbox setelah fetch selesai (bukan kirim langsung)
+   - Logging status enqueue notifikasi
    - Memuat state scheduler dari PostgreSQL sebelum proses client
    - Menyimpan state terbaru (`last_ig_count`, `last_tiktok_count`, `last_notified_at`) secara atomik setelah proses client
 
-4. **src/model/waNotificationReminderStateModel.js** (Extended)
+4. **src/model/waNotificationOutboxModel.js** (New)
+   - Insert event outbox dengan deduplikasi `idempotency_key`
+   - Claim batch `pending/retrying` secara transactional (`FOR UPDATE SKIP LOCKED`)
+   - Update status kirim (`sent`, `retrying`, `dead_letter`) + metadata percobaan
+
+5. **src/service/waOutboxWorkerService.js** (New)
+   - Proses pengiriman WA terpisah dari detector perubahan
+   - Retry exponential backoff + dead-letter policy
+
+6. **src/cron/cronWaOutboxWorker.js** (New)
+   - Menjalankan worker outbox setiap menit
+
+7. **src/model/waNotificationReminderStateModel.js** (Extended)
    - Menyediakan akses state scheduler WA (`wa_notification_scheduler_state`)
    - Fungsi bulk-read state per `client_id`
    - Fungsi upsert state scheduler pasca proses client
@@ -109,17 +121,23 @@ Format group ID WhatsApp harus:
    - Jika ada penambahan, ambil detail post baru dari database
    - Jika ada pengurangan, hitung selisihnya
    - Ambil link report yang diupdate dalam 24 jam terakhir
-4. **Kirim notifikasi**:
+4. **Enqueue notifikasi ke outbox**:
    - Jika ada perubahan yang perlu dinotifikasikan
    - Format pesan sesuai jenis perubahan
-   - Kirim ke semua grup yang dikonfigurasi di `client_group`
-   - Log status pengiriman
+   - Simpan event ke `wa_notification_outbox` dengan status `pending` dan `idempotency_key`
+   - Deduplikasi otomatis saat insert (`ON CONFLICT idempotency_key DO NOTHING`)
+5. **Worker kirim WhatsApp**:
+   - Cron worker cepat membaca outbox status `pending`/`retrying`
+   - Saat diproses, status diubah ke `processing` dan `attempt_count` bertambah
+   - Jika sukses: status `sent` + isi `sent_at`
+   - Jika gagal: retry exponential backoff sampai `max_attempts`, lalu `dead_letter`
 
 ## Logging
 
-Sistem mencatat setiap langkah dengan format:
+Sistem mencatat setiap langkah enqueue dan delivery dengan format seperti:
 ```
-[CRON DIRFETCH SOSMED][CLIENT_ID][waNotification][action=sendNotification][result=completed] | IG 5→8 | TikTok 3→4 | WA notification sent: +3 IG posts, +1 TikTok posts, ~2 link changes
+[CRON DIRFETCH SOSMED][CLIENT_ID][waNotification][action=enqueueNotification][result=completed] | IG 5→8 | TikTok 3→4 | Outbox notification queued: Changes detected: +3 IG posts, +1 TikTok posts
+[WA_OUTBOX_WORKER] processed claimed=10 sent=8 retried=1 dead_letter=1
 ```
 
 ## Keamanan
@@ -238,3 +256,17 @@ Jika query state gagal (misalnya database sementara down):
 - Perhitungan delta memakai baseline konservatif (`counts_before = counts_after`) agar tidak memicu blast notifikasi berkala tanpa state valid.
 - Mode hourly-only notification dinonaktifkan sementara (hanya kirim jika benar-benar terdeteksi perubahan signifikan dari data yang tersedia).
 - Error state storage dilaporkan ke Telegram untuk observability.
+
+
+## Skema Outbox
+
+Tabel `wa_notification_outbox` menyimpan antrian notifikasi dengan kolom penting:
+
+- `status`: `pending`, `retrying`, `processing`, `sent`, `dead_letter`
+- `idempotency_key`: kunci deduplikasi agar pesan tidak terkirim ganda
+- `attempt_count` dan `max_attempts`: kontrol retry
+- `next_attempt_at`: jadwal percobaan ulang berikutnya
+- `sent_at`: timestamp sukses terkirim
+- `error_message`: error terakhir saat gagal kirim
+
+Backoff retry memakai exponential policy berbasis `attempt_count` dan dibatasi maksimum 1 jam antar percobaan.

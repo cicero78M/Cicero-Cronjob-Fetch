@@ -43,12 +43,8 @@ jest.unstable_mockModule('../src/service/tugasChangeDetector.js', () => ({
 }));
 
 jest.unstable_mockModule('../src/service/tugasNotificationService.js', () => ({
-  sendTugasNotification: jest.fn(),
+  enqueueTugasNotification: jest.fn(),
   buildChangeSummary: jest.fn(),
-}));
-
-jest.unstable_mockModule('../src/service/waService.js', () => ({
-  waGatewayClient: null,
 }));
 
 jest.unstable_mockModule('../src/service/telegramService.js', () => ({

@@ -4,6 +4,8 @@ import { findById as findClientById } from '../model/clientModel.js';
 import { safeSendMessage } from '../utils/waHelper.js';
 import { getPostsTodayByClient as getPostsTodayByClientInsta } from '../model/instaPostModel.js';
 import { getPostsTodayByClient as getPostsTodayByClientTiktok } from '../model/tiktokPostModel.js';
+import { enqueueOutboxEvents } from '../model/waNotificationOutboxModel.js';
+import { createHash } from 'crypto';
 
 const LOG_TAG = 'TUGAS_NOTIFICATION';
 
@@ -494,6 +496,125 @@ export async function sendTugasNotification(waClient, clientId, changes, options
     console.error(`[${LOG_TAG}] Error sending task notification:`, error.message);
     return false;
   }
+}
+
+function buildIdempotencyHash(payload) {
+  return createHash('sha256').update(payload).digest('hex');
+}
+
+function getJakartaHourKey(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    hour12: false,
+  });
+  return formatter.format(date).replace(' ', 'T').replace(/-/g, '');
+}
+
+export async function buildTugasNotificationPayload(clientId, changes, options = {}) {
+  const { forceScheduled = false } = options;
+
+  if (!clientId) {
+    return null;
+  }
+
+  const client = await findClientById(clientId);
+  if (!client) {
+    return null;
+  }
+
+  const clientGroup = client.client_group;
+  if (!clientGroup || clientGroup.trim() === '') {
+    return null;
+  }
+
+  const rawGroupIds = clientGroup
+    .split(/[,;]/)
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
+
+  const groupIds = rawGroupIds
+    .map((id) => normalizeGroupId(id))
+    .filter((id) => id.length > 0);
+
+  if (groupIds.length === 0) {
+    return null;
+  }
+
+  const clientName = client.nama || clientId;
+  const messages = [];
+
+  if (forceScheduled) {
+    const scheduledMsg = await formatScheduledTaskList(clientName, changes, clientId);
+    if (scheduledMsg) messages.push(scheduledMsg);
+  } else {
+    if (changes.igAdded && changes.igAdded.length > 0) {
+      const msg = formatInstaPostAdditions(changes.igAdded, clientName);
+      if (msg) messages.push(msg);
+    }
+
+    if (changes.tiktokAdded && changes.tiktokAdded.length > 0) {
+      const msg = formatTiktokPostAdditions(changes.tiktokAdded, clientName);
+      if (msg) messages.push(msg);
+    }
+
+    if (changes.igDeleted > 0 || changes.tiktokDeleted > 0) {
+      const msg = formatPostDeletions(changes, clientName);
+      if (msg) messages.push(msg);
+    }
+
+    if (changes.linkChanges && changes.linkChanges.length > 0) {
+      const msg = formatLinkChanges(changes.linkChanges, clientName);
+      if (msg) messages.push(msg);
+    }
+  }
+
+  if (messages.length === 0) {
+    return null;
+  }
+
+  return {
+    clientId,
+    groupIds,
+    messages,
+    forceScheduled,
+  };
+}
+
+export async function enqueueTugasNotification(clientId, changes, options = {}) {
+  const payload = await buildTugasNotificationPayload(clientId, changes, options);
+  if (!payload) {
+    return { enqueuedCount: 0, duplicatedCount: 0 };
+  }
+
+  const { groupIds, messages, forceScheduled } = payload;
+  const hourKey = getJakartaHourKey();
+
+  const outboxEvents = [];
+  for (const groupId of groupIds) {
+    for (const message of messages) {
+      const idempotencySeed = forceScheduled
+        ? `${clientId}|${groupId}|scheduled|${hourKey}|${message}`
+        : `${clientId}|${groupId}|change|${message}`;
+
+      outboxEvents.push({
+        clientId,
+        groupId,
+        message,
+        idempotencyKey: buildIdempotencyHash(idempotencySeed),
+        maxAttempts: 5,
+      });
+    }
+  }
+
+  const result = await enqueueOutboxEvents(outboxEvents);
+  return {
+    enqueuedCount: result.insertedCount,
+    duplicatedCount: result.duplicatedCount,
+  };
 }
 
 /**
