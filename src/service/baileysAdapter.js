@@ -82,10 +82,103 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   const MAC_ERROR_RESET_TIMEOUT = 60000; // Reset counter after 60 seconds without errors
   const MAC_ERROR_RAPID_THRESHOLD = 5000; // If errors occur within 5 seconds, consider it rapid/serious
 
-  // Pino logger configuration (silent unless debug is enabled)
-  const logger = P({ 
-    level: debugLoggingEnabled ? 'debug' : 'silent',
-    timestamp: debugLoggingEnabled
+  /**
+   * Handle Bad MAC errors detected in logger output
+   */
+  const handleBadMacError = (errorMsg) => {
+    const now = Date.now();
+    const previousErrorTime = lastMacErrorTime;
+    const timeSinceLastError = previousErrorTime > 0 ? now - previousErrorTime : 0;
+    
+    // Reset counter if too much time has passed
+    if (previousErrorTime > 0 && timeSinceLastError > MAC_ERROR_RESET_TIMEOUT) {
+      console.log(
+        `[BAILEYS] Resetting Bad MAC counter due to timeout (${Math.round(timeSinceLastError/1000)}s since last error)`
+      );
+      consecutiveMacErrors = 0;
+    }
+    
+    consecutiveMacErrors++;
+    lastMacErrorTime = now;
+    
+    const isRapidError = previousErrorTime > 0 && timeSinceLastError < MAC_ERROR_RAPID_THRESHOLD;
+    
+    console.error(
+      `[BAILEYS] Bad MAC error detected in decryption layer (${consecutiveMacErrors}/${MAX_CONSECUTIVE_MAC_ERRORS})${isRapidError ? ' [RAPID]' : ''}:`,
+      errorMsg
+    );
+    
+    // Trigger recovery if threshold reached or rapid errors detected
+    const shouldRecover = consecutiveMacErrors >= MAX_CONSECUTIVE_MAC_ERRORS || 
+                         (isRapidError && consecutiveMacErrors >= 1);
+    
+    if (shouldRecover && !reinitInProgress) {
+      const reason = isRapidError 
+        ? `Rapid Bad MAC errors in decryption (${Math.round(timeSinceLastError/1000)}s between errors)`
+        : `${MAX_CONSECUTIVE_MAC_ERRORS} consecutive MAC failures in decryption`;
+      
+      console.warn(
+        `[BAILEYS] Too many Bad MAC errors detected, scheduling reinitialization (reason: ${reason})`
+      );
+      
+      // Schedule reinitialization asynchronously to avoid blocking
+      setImmediate(async () => {
+        if (!reinitInProgress) {
+          try {
+            await reinitializeClient(
+              'bad-mac-error-decryption',
+              reason,
+              { clearAuthSessionOverride: true }
+            );
+            consecutiveMacErrors = 0;
+            lastMacErrorTime = 0;
+          } catch (err) {
+            console.error('[BAILEYS] Failed to reinitialize after Bad MAC:', err?.message || err);
+          }
+        }
+      });
+    }
+  };
+
+  // Custom Pino logger that intercepts error messages
+  const logger = P({
+    level: 'error', // Set to 'error' to intercept error-level logs from Baileys
+    timestamp: true,
+    hooks: {
+      logMethod(inputArgs, method, level) {
+        // Intercept error-level logs to detect Bad MAC errors
+        if (level >= 50) { // 50 = error level in Pino
+          const firstArg = inputArgs[0];
+          let errorText = '';
+          
+          if (typeof firstArg === 'string') {
+            errorText = firstArg;
+          } else if (firstArg && typeof firstArg === 'object') {
+            errorText = firstArg.msg || firstArg.message || firstArg.err?.message || '';
+          }
+          
+          // Check for Bad MAC errors (case-insensitive)
+          const lowerText = errorText.toLowerCase();
+          const isBadMacError = lowerText.includes('bad mac') || lowerText.includes('failed to decrypt');
+          
+          if (isBadMacError) {
+            // Handle Bad MAC error asynchronously
+            setImmediate(() => handleBadMacError(errorText));
+            // Always log Bad MAC errors to console for visibility
+            console.error('[BAILEYS-LOGGER] Bad MAC error detected:', errorText);
+            // Don't let Pino log it again
+            return undefined;
+          }
+        }
+        
+        // Only allow Pino logging if debug is enabled
+        if (debugLoggingEnabled) {
+          return method.apply(this, inputArgs);
+        }
+        // Suppress other Baileys logs when debug is disabled
+        return undefined;
+      }
+    }
   });
 
   /**
@@ -268,97 +361,14 @@ export async function createBaileysClient(clientId = 'wa-admin') {
 
               emitter.emit('message', transformedMessage);
             } catch (error) {
-              // Catch any errors during message processing (including decryption errors)
+              // Log any errors during message processing
+              // Bad MAC errors will be handled by the logger-level handler
               const errorMessage = error?.message || String(error);
-              const errorStack = error?.stack || '';
-              
-              // Check if this is a Bad MAC error during message decryption
-              const isBadMacError = errorMessage.includes('Bad MAC') || 
-                                   errorStack.includes('Bad MAC');
-              
-              if (isBadMacError) {
-                console.error(
-                  '[BAILEYS] Bad MAC error during message decryption:',
-                  errorMessage
-                );
-                
-                // Increment counter for errors during message processing
-                const now = Date.now();
-                const previousErrorTime = lastMacErrorTime;
-                const isRapidError = previousErrorTime > 0 && (now - previousErrorTime) < MAC_ERROR_RAPID_THRESHOLD;
-                const timeSinceLastError = previousErrorTime > 0 ? now - previousErrorTime : 0;
-                
-                // Reset counter if too much time has passed
-                if (previousErrorTime > 0 && timeSinceLastError > MAC_ERROR_RESET_TIMEOUT) {
-                  consecutiveMacErrors = 0;
-                }
-                
-                consecutiveMacErrors++;
-                lastMacErrorTime = now;
-                
-                console.error(
-                  `[BAILEYS] Bad MAC error in message handler (${consecutiveMacErrors}/${MAX_CONSECUTIVE_MAC_ERRORS})${isRapidError ? ' [RAPID]' : ''}`,
-                  `from ${msg.key.remoteJid || 'unknown'}`
-                );
-                
-                // Trigger recovery if threshold reached
-                const shouldRecover = consecutiveMacErrors >= MAX_CONSECUTIVE_MAC_ERRORS || 
-                                     (isRapidError && consecutiveMacErrors >= 1);
-                
-                if (shouldRecover && !reinitInProgress) {
-                  // Set flag immediately to prevent race conditions
-                  reinitInProgress = true;
-                  
-                  const reason = isRapidError 
-                    ? `Rapid Bad MAC errors during message decryption (${Math.round(timeSinceLastError/1000)}s between errors)`
-                    : `${MAX_CONSECUTIVE_MAC_ERRORS} consecutive MAC failures during message processing`;
-                  
-                  console.warn(
-                    `[BAILEYS] Too many Bad MAC errors in message handler, reinitializing (reason: ${reason})`
-                  );
-                  
-                  // Trigger reinitialization asynchronously to not block message processing
-                  // Note: reinitializeClient will set reinitInProgress=true again internally,
-                  // but we set it here first to prevent race conditions with rapid errors
-                  (async () => {
-                    try {
-                      // Wait a bit to avoid reinitializing in the middle of message processing
-                      await new Promise(resolve => setTimeout(resolve, 100));
-                      
-                      // Reset flag temporarily so reinitializeClient can proceed
-                      reinitInProgress = false;
-                      
-                      await reinitializeClient(
-                        'bad-mac-error-message-handler',
-                        reason,
-                        { clearAuthSessionOverride: true }
-                      );
-                      
-                      // Reset counters after successful reinitialization
-                      consecutiveMacErrors = 0;
-                      lastMacErrorTime = 0;
-                    } catch (err) {
-                      console.error('[BAILEYS] Failed to reinitialize after Bad MAC:', err?.message || err);
-                      // Reset counters even on failure to allow retry later
-                      consecutiveMacErrors = 0;
-                      lastMacErrorTime = 0;
-                    } finally {
-                      // Ensure flag is cleared (reinitializeClient will have already set it to false)
-                      // This is a safety net in case something unexpected happens
-                      if (reinitInProgress) {
-                        console.warn('[BAILEYS] Clearing stuck reinitInProgress flag');
-                        reinitInProgress = false;
-                      }
-                    }
-                  })();
-                }
-              } else {
-                // Log other errors but don't trigger recovery
-                console.error(
-                  '[BAILEYS] Error processing message:',
-                  errorMessage
-                );
-              }
+              console.error(
+                '[BAILEYS] Error processing message:',
+                errorMessage,
+                `from ${msg.key?.remoteJid || 'unknown'}`
+              );
             }
           }
         });
