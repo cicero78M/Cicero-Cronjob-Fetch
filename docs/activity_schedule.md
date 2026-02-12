@@ -1,7 +1,7 @@
 # System Activity Schedule
-*Last updated: 2026-02-12*
+*Last updated: 2026-02-13*
 
-This document summarizes the automated jobs ("activity") that run inside Cicero_V2. All jobs use `node-cron`, are registered from `src/cron/*.js` during `app.js` boot, and execute in the **Asia/Jakarta** timezone unless stated otherwise. Base jobs still come from the manifest in `src/cron/cronManifest.js`, while Ditbinmas (dirRequest) jobs are grouped in `src/cron/dirRequest/index.js` so they can be toggled together when needed.【F:src/cron/dirRequest/index.js†L1-L108】
+This document summarizes the automated jobs ("activity") that run inside Cicero_V2. All jobs use `node-cron`, are registered from `src/cron/*.js` during `app.js` boot, and execute in the **Asia/Jakarta** timezone unless stated otherwise. Untuk service `Cicero-Cronjob-Fetch`, entrypoint `app.js` wajib mengimpor `src/cron/cronDirRequestFetchSosmed.js` **dan** `src/cron/cronWaOutboxWorker.js` agar worker pengiriman WhatsApp ikut terdaftar saat boot. Base jobs still come from the manifest in `src/cron/cronManifest.js`, while Ditbinmas (dirRequest) jobs are grouped in `src/cron/dirRequest/index.js` so they can be toggled together when needed.【F:src/cron/dirRequest/index.js†L1-L108】
 
 ## Runtime safeguards & configuration sync
 
