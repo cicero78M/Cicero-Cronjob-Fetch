@@ -142,8 +142,8 @@ export async function createBaileysClient(clientId = 'wa-admin') {
 
   // Custom Pino logger that intercepts error messages
   const logger = P({
-    level: debugLoggingEnabled ? 'debug' : 'error', // Set to 'error' to capture error logs
-    timestamp: debugLoggingEnabled,
+    level: 'error', // Set to 'error' to intercept error-level logs from Baileys
+    timestamp: true,
     hooks: {
       logMethod(inputArgs, method, level) {
         // Intercept error-level logs to detect Bad MAC errors
@@ -159,17 +159,23 @@ export async function createBaileysClient(clientId = 'wa-admin') {
           
           // Check for Bad MAC errors (case-insensitive)
           const lowerText = errorText.toLowerCase();
-          if (lowerText.includes('bad mac') || lowerText.includes('failed to decrypt')) {
+          const isBadMacError = lowerText.includes('bad mac') || lowerText.includes('failed to decrypt');
+          
+          if (isBadMacError) {
             // Handle Bad MAC error asynchronously
             setImmediate(() => handleBadMacError(errorText));
+            // Always log Bad MAC errors to console for visibility
+            console.error('[BAILEYS-LOGGER] Bad MAC error detected:', errorText);
+            // Don't let Pino log it again
+            return undefined;
           }
         }
         
-        // Continue with normal logging only if debug is enabled
+        // Only allow Pino logging if debug is enabled
         if (debugLoggingEnabled) {
           return method.apply(this, inputArgs);
         }
-        // Explicitly return undefined to suppress logging when debug is disabled
+        // Suppress other Baileys logs when debug is disabled
         return undefined;
       }
     }
