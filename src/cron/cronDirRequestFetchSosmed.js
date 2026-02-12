@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 dotenv.config();
+import pLimit from "p-limit";
 
 import { scheduleCronJob } from "../utils/cronScheduler.js";
 import { findAllActiveClientsWithSosmed } from "../model/clientModel.js";
@@ -22,6 +23,9 @@ const LOG_TAG = "CRON DIRFETCH SOSMED";
 const DISTRIBUTED_LOCK_KEY = "cron:dirfetch:sosmed";
 const CRON_MAX_RUN_MINUTES = 30;
 const LOCK_TTL_SECONDS = (CRON_MAX_RUN_MINUTES + 5) * 60;
+const DEFAULT_CLIENT_CONCURRENCY = 4;
+const DEFAULT_MAX_RUN_DURATION_MS = (CRON_MAX_RUN_MINUTES - 2) * 60 * 1000;
+const DEADLINE_INTAKE_BUFFER_MS = 20 * 1000;
 
 let isFetchInFlight = false;
 
@@ -141,8 +145,166 @@ function shouldSendHourlyNotifications() {
   return jakartaHour >= 6 && jakartaHour < 17;
 }
 
+export async function processClient(client, options = {}) {
+  const {
+    skipPostFetch,
+    schedulerStateByClient,
+    stateStorageHealthy,
+  } = options;
+  const clientStartTime = Date.now();
+  const clientId = normalizeClientId(client?.client_id);
+  const hasInstagram = client?.client_insta_status !== false;
+  const hasTiktok = client?.client_tiktok_status !== false;
+  const schedulerState = schedulerStateByClient.get(clientId) || buildFallbackState(clientId);
+
+  // Fetch Instagram posts
+  if (!skipPostFetch && hasInstagram) {
+    logMessage("instagramFetch", clientId, "fetchInstagram", "start", null, null);
+    await fetchAndStoreInstaContent(
+      ["shortcode", "caption", "like_count", "timestamp"],
+      null,
+      null,
+      clientId
+    );
+    logMessage("instagramFetch", clientId, "fetchInstagram", "completed", null, null);
+  } else {
+    logMessage("instagramFetch", clientId, "fetchInstagram", "skipped", null, null,
+      !hasInstagram ? "Instagram account inactive" : "forceEngagementOnly=true");
+  }
+
+  // Fetch TikTok posts
+  if (!skipPostFetch && hasTiktok) {
+    logMessage("tiktokFetch", clientId, "fetchTiktok", "start", null, null);
+    await fetchAndStoreTiktokContent(clientId);
+    logMessage("tiktokFetch", clientId, "fetchTiktok", "completed", null, null);
+  } else {
+    logMessage("tiktokFetch", clientId, "fetchTiktok", "skipped", null, null,
+      !hasTiktok ? "TikTok account inactive" : "forceEngagementOnly=true");
+  }
+
+  // Fetch Instagram likes
+  if (hasInstagram) {
+    logMessage("likesRefresh", clientId, "refreshLikes", "start", null, null);
+    await handleFetchLikesInstagram(null, null, clientId);
+    logMessage("likesRefresh", clientId, "refreshLikes", "completed", null, null);
+  } else {
+    logMessage("likesRefresh", clientId, "refreshLikes", "skipped", null, null,
+      "Instagram account inactive");
+  }
+
+  // Fetch TikTok comments
+  logMessage("commentRefresh", clientId, "refreshComments", "start", null, null);
+  await handleFetchKomentarTiktokBatch(null, null, clientId);
+  logMessage("commentRefresh", clientId, "refreshComments", "completed", null, null);
+
+  // Get updated counts after successful fetch+refresh
+  const [igCount, tiktokCount] = await Promise.all([
+    getInstaPostCount(clientId),
+    getTiktokPostCount(clientId),
+  ]);
+
+  const countsAfter = { ig: igCount, tiktok: tiktokCount };
+  const countsBefore = resolveCountsBefore(schedulerState, countsAfter, stateStorageHealthy);
+
+  // Detect changes for WhatsApp notification
+  const changes = await detectChanges(
+    { igCount: countsBefore.ig, tiktokCount: countsBefore.tiktok },
+    { igCount: countsAfter.ig, tiktokCount: countsAfter.tiktok },
+    clientId
+  );
+
+  logMessage("fetchComplete", clientId, "fetchComplete", "completed", countsBefore, countsAfter,
+    "Social media fetch completed successfully");
+
+  // Check if it's time for hourly notification (during post fetch period, last run 16:30)
+  const isNotificationTime = shouldSendHourlyNotifications();
+  const shouldSendHourly = isNotificationTime && shouldSendHourlyNotification(schedulerState);
+  const hasChanges = hasNotableChanges(changes);
+  let notificationSent = false;
+
+  // conservative fallback if state storage unavailable: don't do hourly-only sends
+  const shouldNotify = stateStorageHealthy ? (hasChanges || shouldSendHourly) : hasChanges;
+
+  if (shouldNotify) {
+    const changeSummary = buildChangeSummary(changes);
+    const notificationReason = shouldSendHourly
+      ? `Hourly notification (${hasChanges ? 'with changes: ' + changeSummary : 'no changes'})`
+      : `Changes detected: ${changeSummary}`;
+
+    logMessage("waNotification", clientId, "sendNotification", "start", countsBefore, countsAfter,
+      `Sending WA notification: ${notificationReason}`);
+
+    try {
+      if (waGatewayClient) {
+        const notificationOptions = {
+          forceScheduled: shouldSendHourly,
+          igCount: countsAfter.ig,
+          tiktokCount: countsAfter.tiktok
+        };
+
+        notificationSent = await sendTugasNotification(
+          waGatewayClient,
+          clientId,
+          changes,
+          notificationOptions
+        );
+
+        if (notificationSent) {
+          logMessage("waNotification", clientId, "sendNotification", "completed", countsBefore, countsAfter,
+            `WA notification sent: ${notificationReason}`);
+          await sendTelegramLog("INFO", `Task notification sent for client ${clientId}: ${notificationReason}`);
+        } else {
+          logMessage("waNotification", clientId, "sendNotification", "skipped", countsBefore, countsAfter,
+            "No group configured or no message sent");
+        }
+      } else {
+        logMessage("waNotification", clientId, "sendNotification", "skipped", countsBefore, countsAfter,
+          "WhatsApp client not available");
+      }
+    } catch (waErr) {
+      logMessage("waNotification", clientId, "sendNotification", "error", countsBefore, countsAfter,
+        waErr?.message || String(waErr),
+        { name: waErr?.name, stack: waErr?.stack?.slice(0, 200) });
+    }
+  } else {
+    logMessage("waNotification", clientId, "sendNotification", "skipped", countsBefore, countsAfter,
+      stateStorageHealthy
+        ? "No notable changes detected and not time for hourly notification"
+        : "State storage unavailable, hourly notifications disabled (conservative mode)");
+  }
+
+  const nextSchedulerState = buildNextSchedulerState(schedulerState, countsAfter, notificationSent);
+  if (stateStorageHealthy) {
+    try {
+      const persistedState = await upsertSchedulerState(nextSchedulerState);
+      schedulerStateByClient.set(clientId, persistedState || nextSchedulerState);
+    } catch (upsertErr) {
+      logMessage("stateStorage", clientId, "saveSchedulerState", "warning", countsBefore, countsAfter,
+        "Failed to persist scheduler state after client processing", {
+          name: upsertErr?.name,
+          message: upsertErr?.message,
+        });
+      await sendTelegramError(`${LOG_TAG}: Failed saving scheduler state for ${clientId}`, upsertErr);
+    }
+  }
+
+  const durationMs = Date.now() - clientStartTime;
+  logMessage("metric", clientId, "client_duration", "completed", countsBefore, countsAfter,
+    `Client duration ${durationMs}ms`, {
+      metric: "client_duration",
+      clientId,
+      durationMs,
+    });
+
+  return { clientId, durationMs };
+}
+
 export async function runCron(options = {}) {
-  const { forceEngagementOnly = false } = options;
+  const {
+    forceEngagementOnly = false,
+    clientConcurrency = DEFAULT_CLIENT_CONCURRENCY,
+    maxRunDurationMs = DEFAULT_MAX_RUN_DURATION_MS,
+  } = options;
   const runStartedAt = Date.now();
   const distributedLock = await acquireDistributedLock({
     key: DISTRIBUTED_LOCK_KEY,
@@ -182,6 +344,8 @@ export async function runCron(options = {}) {
     logMessage("start", null, "cron", "start", null, null, "", {
       forceEngagementOnly,
       skipPostFetch,
+      clientConcurrency,
+      maxRunDurationMs,
       timeBasedMessage
     });
     await sendTelegramLog("INFO", `🚀 Cron job started: ${LOG_TAG} - ${timeBasedMessage}${forceEngagementOnly ? " (forced engagement only)" : ""}`);
@@ -212,154 +376,64 @@ export async function runCron(options = {}) {
 
     logMessage("init", null, "loadClients", "loaded", null, null, `Processing ${activeClients.length} clients`);
 
+    const limit = pLimit(clientConcurrency);
+    const clientTasks = [];
+    let processedCount = 0;
+    let skippedDueToDeadline = 0;
+
     for (const client of activeClients) {
-      try {
-        const clientId = normalizeClientId(client.client_id);
-        const hasInstagram = client?.client_insta_status !== false;
-        const hasTiktok = client?.client_tiktok_status !== false;
-        const schedulerState = schedulerStateByClient.get(clientId) || buildFallbackState(clientId);
+      const elapsedMs = Date.now() - runStartedAt;
+      const remainingMs = maxRunDurationMs - elapsedMs;
 
-        // Fetch Instagram posts
-        if (!skipPostFetch && hasInstagram) {
-          logMessage("instagramFetch", clientId, "fetchInstagram", "start", null, null);
-          await fetchAndStoreInstaContent(
-            ["shortcode", "caption", "like_count", "timestamp"],
-            null,
-            null,
-            clientId
-          );
-          logMessage("instagramFetch", clientId, "fetchInstagram", "completed", null, null);
-        } else {
-          logMessage("instagramFetch", clientId, "fetchInstagram", "skipped", null, null,
-            !hasInstagram ? "Instagram account inactive" : "forceEngagementOnly=true");
-        }
-
-        // Fetch TikTok posts
-        if (!skipPostFetch && hasTiktok) {
-          logMessage("tiktokFetch", clientId, "fetchTiktok", "start", null, null);
-          await fetchAndStoreTiktokContent(clientId);
-          logMessage("tiktokFetch", clientId, "fetchTiktok", "completed", null, null);
-        } else {
-          logMessage("tiktokFetch", clientId, "fetchTiktok", "skipped", null, null,
-            !hasTiktok ? "TikTok account inactive" : "forceEngagementOnly=true");
-        }
-
-        // Fetch Instagram likes
-        if (hasInstagram) {
-          logMessage("likesRefresh", clientId, "refreshLikes", "start", null, null);
-          await handleFetchLikesInstagram(null, null, clientId);
-          logMessage("likesRefresh", clientId, "refreshLikes", "completed", null, null);
-        } else {
-          logMessage("likesRefresh", clientId, "refreshLikes", "skipped", null, null,
-            "Instagram account inactive");
-        }
-
-        // Fetch TikTok comments
-        logMessage("commentRefresh", clientId, "refreshComments", "start", null, null);
-        await handleFetchKomentarTiktokBatch(null, null, clientId);
-        logMessage("commentRefresh", clientId, "refreshComments", "completed", null, null);
-
-        // Get updated counts after successful fetch+refresh
-        const [igCount, tiktokCount] = await Promise.all([
-          getInstaPostCount(clientId),
-          getTiktokPostCount(clientId),
-        ]);
-
-        const countsAfter = { ig: igCount, tiktok: tiktokCount };
-        const countsBefore = resolveCountsBefore(schedulerState, countsAfter, stateStorageHealthy);
-
-        // Detect changes for WhatsApp notification
-        const changes = await detectChanges(
-          { igCount: countsBefore.ig, tiktokCount: countsBefore.tiktok },
-          { igCount: countsAfter.ig, tiktokCount: countsAfter.tiktok },
-          clientId
-        );
-
-        logMessage("fetchComplete", clientId, "fetchComplete", "completed", countsBefore, countsAfter,
-          "Social media fetch completed successfully");
-
-        // Check if it's time for hourly notification (during post fetch period, last run 16:30)
-        const isNotificationTime = shouldSendHourlyNotifications();
-        const shouldSendHourly = isNotificationTime && shouldSendHourlyNotification(schedulerState);
-        const hasChanges = hasNotableChanges(changes);
-        let notificationSent = false;
-
-        // conservative fallback if state storage unavailable: don't do hourly-only sends
-        const shouldNotify = stateStorageHealthy ? (hasChanges || shouldSendHourly) : hasChanges;
-
-        if (shouldNotify) {
-          const changeSummary = buildChangeSummary(changes);
-          const notificationReason = shouldSendHourly
-            ? `Hourly notification (${hasChanges ? 'with changes: ' + changeSummary : 'no changes'})`
-            : `Changes detected: ${changeSummary}`;
-
-          logMessage("waNotification", clientId, "sendNotification", "start", countsBefore, countsAfter,
-            `Sending WA notification: ${notificationReason}`);
-
-          try {
-            if (waGatewayClient) {
-              const notificationOptions = {
-                forceScheduled: shouldSendHourly,
-                igCount: countsAfter.ig,
-                tiktokCount: countsAfter.tiktok
-              };
-
-              notificationSent = await sendTugasNotification(
-                waGatewayClient,
-                clientId,
-                changes,
-                notificationOptions
-              );
-
-              if (notificationSent) {
-                logMessage("waNotification", clientId, "sendNotification", "completed", countsBefore, countsAfter,
-                  `WA notification sent: ${notificationReason}`);
-                await sendTelegramLog("INFO", `Task notification sent for client ${clientId}: ${notificationReason}`);
-              } else {
-                logMessage("waNotification", clientId, "sendNotification", "skipped", countsBefore, countsAfter,
-                  "No group configured or no message sent");
-              }
-            } else {
-              logMessage("waNotification", clientId, "sendNotification", "skipped", countsBefore, countsAfter,
-                "WhatsApp client not available");
-            }
-          } catch (waErr) {
-            logMessage("waNotification", clientId, "sendNotification", "error", countsBefore, countsAfter,
-              waErr?.message || String(waErr),
-              { name: waErr?.name, stack: waErr?.stack?.slice(0, 200) });
-          }
-        } else {
-          logMessage("waNotification", clientId, "sendNotification", "skipped", countsBefore, countsAfter,
-            stateStorageHealthy
-              ? "No notable changes detected and not time for hourly notification"
-              : "State storage unavailable, hourly notifications disabled (conservative mode)");
-        }
-
-        const nextSchedulerState = buildNextSchedulerState(schedulerState, countsAfter, notificationSent);
-        if (stateStorageHealthy) {
-          try {
-            const persistedState = await upsertSchedulerState(nextSchedulerState);
-            schedulerStateByClient.set(clientId, persistedState || nextSchedulerState);
-          } catch (upsertErr) {
-            logMessage("stateStorage", clientId, "saveSchedulerState", "warning", countsBefore, countsAfter,
-              "Failed to persist scheduler state after client processing", {
-                name: upsertErr?.name,
-                message: upsertErr?.message,
-              });
-            await sendTelegramError(`${LOG_TAG}: Failed saving scheduler state for ${clientId}`, upsertErr);
-          }
-        }
-      } catch (clientErr) {
-        const clientId = normalizeClientId(client?.client_id);
-        logMessage("client", clientId, "processClient", "error", null, null,
-          clientErr?.message || String(clientErr),
-          { name: clientErr?.name, stack: clientErr?.stack?.slice(0, 200) });
-        await sendTelegramError(`${LOG_TAG}: Client ${clientId}`, clientErr);
+      if (remainingMs <= DEADLINE_INTAKE_BUFFER_MS) {
+        skippedDueToDeadline += 1;
+        continue;
       }
+
+      clientTasks.push(limit(async () => {
+        try {
+          const result = await processClient(client, {
+            skipPostFetch,
+            schedulerStateByClient,
+            stateStorageHealthy,
+          });
+          processedCount += 1;
+          return result;
+        } catch (clientErr) {
+          const clientId = normalizeClientId(client?.client_id);
+          logMessage("client", clientId, "processClient", "error", null, null,
+            clientErr?.message || String(clientErr),
+            { name: clientErr?.name, stack: clientErr?.stack?.slice(0, 200) });
+          await sendTelegramError(`${LOG_TAG}: Client ${clientId}`, clientErr);
+          return null;
+        }
+      }));
     }
 
-    logMessage("end", null, "cron", "completed", null, null, "All clients processed successfully");
-    await sendTelegramLog("INFO", `✅ ${LOG_TAG} completed successfully. Processed ${activeClients.length} clients.`);
+    await Promise.all(clientTasks);
+
+    if (skippedDueToDeadline > 0) {
+      logMessage("deadline", null, "client_intake", "limited", null, null,
+        `Stopped client intake due to deadline. Remaining clients will be processed in next run.`, {
+          metric: "skipped_due_to_deadline",
+          skippedDueToDeadline,
+          maxRunDurationMs,
+        });
+    }
+
+    const completionMessage = `✅ ${LOG_TAG} completed. processed_count=${processedCount}, skipped_due_to_deadline=${skippedDueToDeadline}, total_clients=${activeClients.length}.`;
+    logMessage("end", null, "cron", "completed", null, null, completionMessage);
+    await sendTelegramLog("INFO", completionMessage);
+
+    const runDurationMs = Date.now() - runStartedAt;
+    if (runDurationMs >= Math.floor(maxRunDurationMs * 0.8)) {
+      logMessage("metric", null, "duration_baseline", "warning", null, null,
+        "Runtime baseline is high. Consider increasing interval or reducing per-run workload.", {
+          metric: "duration_baseline_warning",
+          runDurationMs,
+          maxRunDurationMs,
+        });
+    }
 
   } catch (err) {
     logMessage("cron", null, "run", "error", null, null, err?.message || String(err),
