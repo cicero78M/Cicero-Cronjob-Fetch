@@ -19,6 +19,8 @@ const DEFAULT_AUTH_DATA_DIR = 'baileys_auth';
 const DEFAULT_AUTH_DATA_PARENT_DIR = '.cicero';
 const SESSION_LOCK_FILE_NAME = '.session.lock';
 const SHUTDOWN_SIGNALS = ['SIGINT', 'SIGTERM'];
+// Delay to ensure async file system operations complete before verification
+const FILE_SYSTEM_OPERATION_DELAY = 100; // milliseconds
 
 function resolveDefaultAuthDataPath() {
   const homeDir = os.homedir?.();
@@ -112,6 +114,8 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   let lockHeldByCurrentProcess = false;
   let lastRecoveryAttemptTime = 0;
   const RECOVERY_COOLDOWN = 30000; // Don't attempt recovery more than once every 30 seconds
+  let errorsDuringCooldown = 0; // Track errors that occur during cooldown
+  const MAX_ERRORS_DURING_COOLDOWN = 5; // Force recovery if too many errors during cooldown
 
   const readSessionLock = async () => {
     try {
@@ -232,23 +236,50 @@ export async function createBaileysClient(clientId = 'wa-admin') {
         `[BAILEYS] Resetting Bad MAC counter due to timeout (${Math.round(timeSinceLastError/1000)}s since last error)`
       );
       consecutiveMacErrors = 0;
+      errorsDuringCooldown = 0;
     }
     
-    // Check if we're in a cooldown period to prevent excessive recovery attempts
-    if (timeSinceLastRecovery < RECOVERY_COOLDOWN) {
-      console.warn(
-        `[BAILEYS] Bad MAC error detected but in recovery cooldown (${Math.round((RECOVERY_COOLDOWN - timeSinceLastRecovery)/1000)}s remaining), skipping recovery`
-      );
-      return;
-    }
-    
+    // Always increment the error counter and update timestamp
     consecutiveMacErrors++;
     lastMacErrorTime = now;
     
+    // Check if we're in a cooldown period
+    const inCooldown = timeSinceLastRecovery < RECOVERY_COOLDOWN;
+    
+    if (inCooldown) {
+      errorsDuringCooldown++;
+      
+      // If too many errors during cooldown, force recovery anyway
+      if (errorsDuringCooldown >= MAX_ERRORS_DURING_COOLDOWN) {
+        console.error(
+          `[BAILEYS] CRITICAL: ${errorsDuringCooldown} Bad MAC errors during cooldown period - forcing immediate recovery`
+        );
+        // Don't return - continue to recovery logic below
+      } else {
+        console.warn(
+          `[BAILEYS] Bad MAC error detected during recovery cooldown (${Math.round((RECOVERY_COOLDOWN - timeSinceLastRecovery)/1000)}s remaining, error ${errorsDuringCooldown}/${MAX_ERRORS_DURING_COOLDOWN})`
+        );
+        return;
+      }
+    } else {
+      // Reset cooldown error counter when not in cooldown
+      errorsDuringCooldown = 0;
+    }
+    
     const isBurstError = previousErrorTime > 0 && timeSinceLastError < MAC_ERROR_BURST_THRESHOLD;
     const isRapidError = previousErrorTime > 0 && timeSinceLastError < MAC_ERROR_RAPID_THRESHOLD;
+    const isForcedRecovery = errorsDuringCooldown >= MAX_ERRORS_DURING_COOLDOWN;
     
-    const errorType = isBurstError ? '[BURST]' : (isRapidError ? '[RAPID]' : '');
+    // Determine error type label for logging
+    let errorType = '';
+    if (isForcedRecovery) {
+      errorType = '[FORCED]';
+    } else if (isBurstError) {
+      errorType = '[BURST]';
+    } else if (isRapidError) {
+      errorType = '[RAPID]';
+    }
+    
     const senderInfo = senderJid ? ` from ${senderJid}` : '';
     
     console.error(
@@ -259,14 +290,18 @@ export async function createBaileysClient(clientId = 'wa-admin') {
     // Trigger recovery if:
     // 1. We've hit the threshold for consecutive errors, OR
     // 2. We're getting rapid errors (within 5 seconds), OR
-    // 3. We're getting burst errors (within 1 second) - immediate action
+    // 3. We're getting burst errors (within 1 second) - immediate action, OR
+    // 4. Too many errors during cooldown period (forced recovery)
     const shouldRecover = consecutiveMacErrors >= MAX_CONSECUTIVE_MAC_ERRORS || 
                          (isRapidError && consecutiveMacErrors >= 1) ||
-                         isBurstError; // Burst errors trigger immediate recovery
+                         isBurstError ||
+                         isForcedRecovery;
     
     if (shouldRecover && !reinitInProgress) {
       let reason;
-      if (isBurstError) {
+      if (isForcedRecovery) {
+        reason = `${errorsDuringCooldown} Bad MAC errors during cooldown - forced recovery`;
+      } else if (isBurstError) {
         reason = `Burst Bad MAC errors in ${source} (${timeSinceLastError}ms between errors) - immediate recovery`;
       } else if (isRapidError) {
         reason = `Rapid Bad MAC errors in ${source} (${Math.round(timeSinceLastError/1000)}s between errors)`;
@@ -279,9 +314,10 @@ export async function createBaileysClient(clientId = 'wa-admin') {
       );
       
       lastRecoveryAttemptTime = now;
+      errorsDuringCooldown = 0; // Reset cooldown counter since we're attempting recovery
       
       // Schedule reinitialization asynchronously to avoid blocking
-      // For burst errors, use immediate execution; for others, use setImmediate
+      // For burst errors and forced recovery, use immediate execution; for others, use setImmediate
       const executeRecovery = async () => {
         if (!reinitInProgress) {
           try {
@@ -296,12 +332,13 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             console.error('[BAILEYS] Failed to reinitialize after Bad MAC:', err?.message || err);
             // Reset recovery attempt time on failure to allow retry after cooldown
             lastRecoveryAttemptTime = 0;
+            errorsDuringCooldown = 0;
           }
         }
       };
       
-      if (isBurstError) {
-        // For burst errors, execute immediately
+      if (isBurstError || isForcedRecovery) {
+        // For burst errors and forced recovery, execute immediately
         executeRecovery().catch(err => {
           console.error('[BAILEYS] Error during immediate recovery:', err?.message || err);
         });
@@ -440,6 +477,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             console.log('[BAILEYS] Connection opened successfully');
             consecutiveMacErrors = 0; // Reset counter on successful connection
             lastMacErrorTime = 0; // Reset timestamp
+            errorsDuringCooldown = 0; // Reset cooldown error counter
             emitter.emit('authenticated');
             emitter.emit('ready');
           }
@@ -735,13 +773,33 @@ export async function createBaileysClient(clientId = 'wa-admin') {
           if (trigger.includes('bad-mac')) {
             console.warn(`[BAILEYS] Performing aggressive session clear for Bad MAC error`);
             
-            // Remove the entire session directory
-            await rm(sessionPath, { recursive: true, force: true });
+            // Verify directory exists before removal
+            if (fs.existsSync(sessionPath)) {
+              console.warn(`[BAILEYS] Removing session directory: ${sessionPath}`);
+              await rm(sessionPath, { recursive: true, force: true });
+              
+              // Add small delay to ensure async file system operations complete
+              await new Promise(resolve => setTimeout(resolve, FILE_SYSTEM_OPERATION_DELAY));
+              
+              // Verify it was removed
+              if (fs.existsSync(sessionPath)) {
+                console.error(`[BAILEYS] WARNING: Session directory still exists after removal attempt`);
+              } else {
+                console.warn(`[BAILEYS] Session directory successfully removed`);
+              }
+            }
             
             // Recreate the directory
             fs.mkdirSync(sessionPath, { recursive: true });
             
-            console.warn(`[BAILEYS] Cleared and recreated auth session for clientId=${clientId} at ${sessionPath}.`);
+            // Verify directory is writable
+            try {
+              fs.accessSync(sessionPath, fs.constants.W_OK | fs.constants.R_OK);
+              console.warn(`[BAILEYS] Cleared and recreated auth session for clientId=${clientId} at ${sessionPath}.`);
+            } catch (accessErr) {
+              console.error(`[BAILEYS] ERROR: Recreated directory is not accessible:`, accessErr?.message || accessErr);
+              throw accessErr;
+            }
           } else {
             // Normal session clear
             await rm(sessionPath, { recursive: true, force: true });
@@ -760,7 +818,9 @@ export async function createBaileysClient(clientId = 'wa-admin') {
       await new Promise(resolve => setTimeout(resolve, 2000));
 
       // Reconnect
+      console.warn(`[BAILEYS] Starting reconnection after reinitialization (trigger: ${trigger})`);
       await startConnect(`reinitialize:${trigger}`);
+      console.warn(`[BAILEYS] Successfully reinitialized and reconnected clientId=${clientId}`);
     } catch (err) {
       console.error(
         `[BAILEYS] Error during reinitialization for clientId=${clientId}:`,
