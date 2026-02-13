@@ -1,5 +1,5 @@
 # Scheduled WhatsApp Notifications
-*Last updated: 2026-02-12*
+*Last updated: 2026-02-13*
 
 Dokumen ini menyelaraskan behavior notifikasi dengan implementasi aktual di `src/cron/cronDirRequestFetchSosmed.js`.
 
@@ -9,7 +9,8 @@ Dokumen ini menyelaraskan behavior notifikasi dengan implementasi aktual di `src
 - Implementasi memakai kombinasi:
   1. **Change-based trigger** (`hasNotableChanges`) dan
   2. **Hourly trigger berbasis state** (`shouldSendHourlyNotification`) selama periode post-fetch.
-- Interval hourly dihitung dari `lastNotifiedAt` dengan ambang **1 jam**.
+- Hourly trigger kini berbasis **slot global Jakarta** (`currentSlotKey`, anchor menit `05`) yang dibandingkan dengan `lastNotifiedSlot` per client.
+- Slot disimpan hanya setelah enqueue sukses agar slot tidak terkunci saat pengiriman gagal.
 
 ## Jadwal Cron Aktual
 
@@ -34,7 +35,7 @@ Dokumen ini menyelaraskan behavior notifikasi dengan implementasi aktual di `src
 
 Notifikasi dikirim jika:
 - ada perubahan signifikan, **atau**
-- sudah melewati interval hourly dan masih di window post-fetch.
+- `lastNotifiedSlot` berbeda dengan slot run saat ini (`currentSlotKey`) dan masih di window post-fetch.
 
 Jika state storage gagal (load/upsert state), sistem masuk mode konservatif: notifikasi hanya dikirim saat ada perubahan.
 
@@ -48,4 +49,3 @@ Setiap perubahan fungsi/module yang berdampak ke notifikasi harus:
 - memperbarui dokumen ini,
 - memperbarui `docs/notification_schedule_source_of_truth.md`, dan
 - memperbarui dokumen terkait lain (`README.md`, `docs/business_process.md`, `docs/wa_*.md` yang terdampak).
-

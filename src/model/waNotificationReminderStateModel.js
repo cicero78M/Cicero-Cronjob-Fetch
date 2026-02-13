@@ -74,6 +74,7 @@ function normalizeSchedulerStateRow(row) {
     lastIgCount: Number(row.last_ig_count || 0),
     lastTiktokCount: Number(row.last_tiktok_count || 0),
     lastNotifiedAt: row.last_notified_at || null,
+    lastNotifiedSlot: row.last_notified_slot || null,
   };
 }
 
@@ -91,7 +92,7 @@ export async function getSchedulerStateMapByClientIds(clientIds = []) {
   }
 
   const res = await query(
-    `SELECT client_id, last_ig_count, last_tiktok_count, last_notified_at
+    `SELECT client_id, last_ig_count, last_tiktok_count, last_notified_at, last_notified_slot
      FROM wa_notification_scheduler_state
      WHERE client_id = ANY($1::text[])`,
     [normalizedIds]
@@ -111,6 +112,7 @@ export async function upsertSchedulerState({
   lastIgCount,
   lastTiktokCount,
   lastNotifiedAt,
+  lastNotifiedSlot,
 }) {
   const normalizedClientId = normalizeClientId(clientId);
   if (!normalizedClientId) return null;
@@ -118,22 +120,25 @@ export async function upsertSchedulerState({
   const lastIgValue = Number(lastIgCount || 0);
   const lastTiktokValue = Number(lastTiktokCount || 0);
   const notifiedAtValue = lastNotifiedAt || null;
+  const notifiedSlotValue = lastNotifiedSlot || null;
 
   const res = await query(
     `INSERT INTO wa_notification_scheduler_state (
       client_id,
       last_ig_count,
       last_tiktok_count,
-      last_notified_at
+      last_notified_at,
+      last_notified_slot
     )
-    VALUES ($1, $2, $3, $4)
+    VALUES ($1, $2, $3, $4, $5)
     ON CONFLICT (client_id) DO UPDATE
       SET last_ig_count = EXCLUDED.last_ig_count,
           last_tiktok_count = EXCLUDED.last_tiktok_count,
           last_notified_at = EXCLUDED.last_notified_at,
+          last_notified_slot = EXCLUDED.last_notified_slot,
           updated_at = NOW()
-    RETURNING client_id, last_ig_count, last_tiktok_count, last_notified_at`,
-    [normalizedClientId, lastIgValue, lastTiktokValue, notifiedAtValue]
+    RETURNING client_id, last_ig_count, last_tiktok_count, last_notified_at, last_notified_slot`,
+    [normalizedClientId, lastIgValue, lastTiktokValue, notifiedAtValue, notifiedSlotValue]
   );
 
   return normalizeSchedulerStateRow(res.rows[0]);
