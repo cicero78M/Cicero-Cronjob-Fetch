@@ -317,7 +317,7 @@ test('baileys adapter handles Bad MAC errors', async () => {
   
   // First MAC error should be logged but not trigger reinit (threshold is 2)
   expect(consoleErrorSpy).toHaveBeenCalledWith(
-    expect.stringContaining('[BAILEYS] Bad MAC error detected (1/2)'),
+    expect.stringContaining('[BAILEYS] Bad MAC error in connection handler (1/2)'),
     expect.stringContaining('Bad MAC')
   );
   
@@ -339,7 +339,7 @@ test('baileys adapter handles Bad MAC errors', async () => {
   
   // Second MAC error should trigger recovery
   expect(consoleErrorSpy).toHaveBeenCalledWith(
-    expect.stringContaining('[BAILEYS] Bad MAC error detected (2/2)'),
+    expect.stringContaining('[BAILEYS] Bad MAC error in connection handler (2/2)'),
     expect.stringContaining('Bad MAC')
   );
   expect(consoleWarnSpy).toHaveBeenCalledWith(
@@ -374,7 +374,7 @@ test('baileys adapter resets MAC error counter on successful connection', async 
   }
   
   expect(consoleErrorSpy).toHaveBeenCalledWith(
-    expect.stringContaining('[BAILEYS] Bad MAC error detected (1/2)'),
+    expect.stringContaining('[BAILEYS] Bad MAC error in connection handler (1/2)'),
     expect.anything()
   );
   
@@ -402,7 +402,7 @@ test('baileys adapter resets MAC error counter on successful connection', async 
   
   // Counter should have reset, so this should be (1/2) not (2/2)
   const errorCalls = consoleErrorSpy.mock.calls.filter(
-    call => call[0] && call[0].includes('[BAILEYS] Bad MAC error detected')
+    call => call[0] && call[0].includes('[BAILEYS] Bad MAC error in connection handler')
   );
   
   // Should have two calls: first at (1/2), second at (1/2) after reset
@@ -543,7 +543,7 @@ test('baileys logger handles plain string failed to decrypt without double trigg
   await new Promise((resolve) => setImmediate(resolve));
 
   const badMacDetectionCalls = consoleErrorSpy.mock.calls.filter((call) =>
-    call[0]?.includes('[BAILEYS] Bad MAC error detected in decryption layer')
+    call[0]?.includes('[BAILEYS] Bad MAC error detected in logger')
   );
   expect(badMacDetectionCalls).toHaveLength(1);
 
