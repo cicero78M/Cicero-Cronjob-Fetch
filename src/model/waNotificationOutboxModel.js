@@ -100,7 +100,7 @@ export async function markOutboxDeadLetter(outboxId, errorMessage) {
     `UPDATE wa_notification_outbox
      SET status = 'dead_letter',
          error_message = $2,
-         next_attempt_at = NULL,
+         next_attempt_at = NOW(),
          updated_at = NOW()
      WHERE outbox_id = $1`,
     [outboxId, errorMessage]
