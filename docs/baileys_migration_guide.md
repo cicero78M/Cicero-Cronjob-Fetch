@@ -48,6 +48,27 @@ The following environment variables are no longer used:
 - Multi-file auth state (creds.json, keys folder)
 - No browser profile needed
 
+### Session Lock Guard (`.session.lock`)
+
+To prevent two processes from using the same Baileys auth directory at the same time,
+the adapter now creates a lock file at:
+
+- `~/.cicero/baileys_auth/{clientId}/.session.lock`
+
+The lock stores minimal metadata:
+
+- `pid`
+- `hostname`
+- `startedAt`
+- `clientId`
+
+Behavior summary:
+
+1. Before `connect`, adapter checks and acquires `.session.lock`.
+2. If lock belongs to a live process, adapter throws a clear error and stops initialization.
+3. If lock PID is stale (process no longer alive), lock is cleaned up automatically.
+4. Lock is released on `disconnect`, on reinitialize with session clear, and during `SIGINT`/`SIGTERM` shutdown handling.
+
 ## API Compatibility
 
 The Baileys adapter maintains full API compatibility with the previous wwebjs adapter. No application code changes required.
