@@ -25,7 +25,7 @@ function normalizeUtcCreatedAt(input) {
 }
 
 function jakartaDateCast(columnAlias = "created_at") {
-  return `(( ${columnAlias} AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Jakarta')`;
+  return `(${columnAlias} AT TIME ZONE 'Asia/Jakarta')`;
 }
 
 /**
@@ -73,7 +73,7 @@ export async function upsertTiktokPosts(client_id, posts) {
   for (const post of posts) {
     await query(
       `INSERT INTO tiktok_post (client_id, video_id, caption, like_count, comment_count, created_at)
-       VALUES ($1, $2, $3, $4, $5, (COALESCE($6::timestamptz, NOW()) AT TIME ZONE 'UTC'))
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, NOW()))
        ON CONFLICT (video_id) DO UPDATE
          SET client_id = EXCLUDED.client_id,
              caption = EXCLUDED.caption,
@@ -119,7 +119,7 @@ export async function upsertTiktokPostWithStatus({
 
   const res = await query(
     `INSERT INTO tiktok_post (client_id, video_id, caption, like_count, comment_count, created_at)
-     VALUES ($1, $2, $3, $4, $5, (COALESCE($6::timestamptz, NOW()) AT TIME ZONE 'UTC'))
+     VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, NOW()))
      ON CONFLICT (video_id) DO UPDATE
        SET client_id = EXCLUDED.client_id,
            caption = EXCLUDED.caption,
