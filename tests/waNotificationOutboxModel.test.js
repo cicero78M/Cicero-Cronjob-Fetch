@@ -52,5 +52,17 @@ describe('waNotificationOutboxModel', () => {
     await markOutboxDeadLetter(3, 'fatal');
 
     expect(mockQuery).toHaveBeenCalledTimes(3);
+
+    const sentSql = mockQuery.mock.calls[0][0];
+    const retrySql = mockQuery.mock.calls[1][0];
+    const deadLetterSql = mockQuery.mock.calls[2][0];
+
+    expect(sentSql).not.toContain('next_attempt_at = NULL');
+    expect(sentSql).not.toContain('next_attempt_at =');
+
+    expect(retrySql).toContain('next_attempt_at = $3');
+
+    expect(deadLetterSql).not.toContain('next_attempt_at = NULL');
+    expect(deadLetterSql).toContain('next_attempt_at = NOW()');
   });
 });

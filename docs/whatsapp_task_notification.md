@@ -271,6 +271,7 @@ Tabel `wa_notification_outbox` menyimpan antrian notifikasi dengan kolom penting
 - `idempotency_key`: kunci deduplikasi agar pesan tidak terkirim ganda
 - `attempt_count` dan `max_attempts`: kontrol retry
 - `next_attempt_at`: jadwal percobaan ulang berikutnya; saat status menjadi `dead_letter`, kolom ini diisi timestamp final (`NOW()`) untuk menjaga jejak waktu percobaan terakhir. Saat status berubah ke `sent`, nilai `next_attempt_at` dipertahankan (tidak di-`NULL`-kan) untuk menjaga histori lifecycle outbox.
+- Perubahan perilaku (2026-02): helper `markOutboxSent` dan `markOutboxDeadLetter` tidak lagi melakukan reset `next_attempt_at` ke `NULL`. Kebijakan final: `sent` mempertahankan nilai existing `next_attempt_at`, sedangkan `dead_letter` menulis stempel final `NOW()`.
 - `sent_at`: timestamp sukses terkirim
 - `error_message`: error terakhir saat gagal kirim
 
