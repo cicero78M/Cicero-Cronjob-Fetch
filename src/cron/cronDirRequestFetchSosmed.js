@@ -28,11 +28,8 @@ const DEADLINE_INTAKE_BUFFER_MS = 20 * 1000;
 
 let isFetchInFlight = false;
 
-// Notification interval: 1 hour (in milliseconds)
-const MINUTES_PER_HOUR = 60;
-const SECONDS_PER_MINUTE = 60;
-const MS_PER_SECOND = 1000;
-const NOTIFICATION_INTERVAL_MS = MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PER_SECOND; // 1 hour
+const JAKARTA_TIMEZONE = "Asia/Jakarta";
+const HOURLY_SLOT_ANCHOR_MINUTE = 5;
 
 function normalizeClientId(clientId) {
   return String(clientId || "").trim().toUpperCase();
@@ -51,27 +48,80 @@ function buildFallbackState(clientId) {
     lastIgCount: null,
     lastTiktokCount: null,
     lastNotifiedAt: null,
+    lastNotifiedSlot: null,
   };
 }
 
 /**
- * Check if enough time has passed since last notification for a client
- * @param {object} schedulerState - scheduler state for client
- * @returns {boolean} True if 1 hour has passed since last notification
+ * Build Jakarta time parts so we can generate deterministic slot keys
+ * regardless of server timezone.
+ * @param {Date} date
+ * @returns {{year: number, month: number, day: number, hour: number, minute: number}}
  */
-function shouldSendHourlyNotification(schedulerState) {
-  const lastNotificationTimeIso = toIsoOrNull(schedulerState?.lastNotifiedAt);
+function getJakartaTimeParts(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: JAKARTA_TIMEZONE,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
-  // If no previous notification, send one
-  if (!lastNotificationTimeIso) {
-    return true;
+  const parts = formatter.formatToParts(date);
+  const partMap = parts.reduce((acc, part) => {
+    if (part.type !== "literal") acc[part.type] = part.value;
+    return acc;
+  }, {});
+
+  return {
+    year: Number(partMap.year),
+    month: Number(partMap.month),
+    day: Number(partMap.day),
+    hour: Number(partMap.hour),
+    minute: Number(partMap.minute),
+  };
+}
+
+/**
+ * Round the current Jakarta time into a fixed hourly slot key.
+ * All runs in the same hour map to one key so hourly notification stays global.
+ *
+ * Example:
+ * - 06:05 WIB => 2026-02-13-06@05
+ * - 06:30 WIB => 2026-02-13-06@05
+ * - 06:03 WIB => 2026-02-13-05@05 (previous hour slot)
+ *
+ * @param {Date} date
+ * @returns {string}
+ */
+function buildJakartaHourlySlotKey(date = new Date()) {
+  const parts = getJakartaTimeParts(date);
+  let slotHour = parts.hour;
+
+  if (parts.minute < HOURLY_SLOT_ANCHOR_MINUTE) {
+    slotHour -= 1;
   }
 
-  const now = Date.now();
-  const timeSinceLastNotification = now - new Date(lastNotificationTimeIso).getTime();
+  if (slotHour < 0) {
+    slotHour = 23;
+    const rolloverDate = new Date(date.getTime() - (24 * 60 * 60 * 1000));
+    const rolloverParts = getJakartaTimeParts(rolloverDate);
+    return `${rolloverParts.year}-${String(rolloverParts.month).padStart(2, "0")}-${String(rolloverParts.day).padStart(2, "0")}-${String(slotHour).padStart(2, "0")}@${String(HOURLY_SLOT_ANCHOR_MINUTE).padStart(2, "0")}`;
+  }
 
-  // Send if 1 hour has passed
-  return timeSinceLastNotification >= NOTIFICATION_INTERVAL_MS;
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}-${String(slotHour).padStart(2, "0")}@${String(HOURLY_SLOT_ANCHOR_MINUTE).padStart(2, "0")}`;
+}
+
+/**
+ * Check if we should send hourly notification for the current fixed slot
+ * @param {object} schedulerState - scheduler state for client
+ * @param {string} currentSlotKey - slot key of current run
+ * @returns {boolean} True if current slot has never been sent
+ */
+function shouldSendHourlyNotification(schedulerState, currentSlotKey) {
+  return schedulerState?.lastNotifiedSlot !== currentSlotKey;
 }
 
 function logMessage(phase, clientId, action, result, countsBefore, countsAfter, message = "", meta = {}) {
@@ -107,12 +157,13 @@ function resolveCountsBefore(schedulerState, countsAfter, storageHealthy) {
   };
 }
 
-function buildNextSchedulerState(schedulerState, countsAfter, notificationSent) {
+function buildNextSchedulerState(schedulerState, countsAfter, notificationSent, currentSlotKey) {
   return {
     clientId: schedulerState.clientId,
     lastIgCount: countsAfter.ig,
     lastTiktokCount: countsAfter.tiktok,
     lastNotifiedAt: notificationSent ? new Date().toISOString() : toIsoOrNull(schedulerState.lastNotifiedAt),
+    lastNotifiedSlot: notificationSent ? currentSlotKey : (schedulerState.lastNotifiedSlot || null),
   };
 }
 
@@ -122,9 +173,7 @@ function buildNextSchedulerState(schedulerState, countsAfter, notificationSent) 
  * @returns {boolean} True if it's time to fetch posts (06:00-16:59 allows 16:30 job)
  */
 function shouldFetchPosts() {
-  const now = new Date();
-  // Get current hour in Jakarta timezone (UTC+7)
-  const jakartaHour = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' })).getHours();
+  const jakartaHour = getJakartaTimeParts(new Date()).hour;
 
   // Check if hour is between 6 and 16 (allows jobs scheduled at 06:00, 06:30, ..., 16:30)
   return jakartaHour >= 6 && jakartaHour < 17;
@@ -136,9 +185,7 @@ function shouldFetchPosts() {
  * @returns {boolean} True if within notification time (06:00-16:59 allows 16:30 notifications)
  */
 function shouldSendHourlyNotifications() {
-  const now = new Date();
-  // Get current hour in Jakarta timezone (UTC+7)
-  const jakartaHour = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' })).getHours();
+  const jakartaHour = getJakartaTimeParts(new Date()).hour;
 
   // Check if hour is between 6 and 16 (allows notifications during post fetch period)
   return jakartaHour >= 6 && jakartaHour < 17;
@@ -155,6 +202,7 @@ export async function processClient(client, options = {}) {
   const hasInstagram = client?.client_insta_status !== false;
   const hasTiktok = client?.client_tiktok_status !== false;
   const schedulerState = schedulerStateByClient.get(clientId) || buildFallbackState(clientId);
+  const currentSlotKey = buildJakartaHourlySlotKey(new Date());
 
   // Fetch Instagram posts
   if (!skipPostFetch && hasInstagram) {
@@ -217,9 +265,25 @@ export async function processClient(client, options = {}) {
 
   // Check if it's time for hourly notification (during post fetch period, last run 16:30)
   const isNotificationTime = shouldSendHourlyNotifications();
-  const shouldSendHourly = isNotificationTime && shouldSendHourlyNotification(schedulerState);
+  const shouldSendHourly = isNotificationTime && shouldSendHourlyNotification(schedulerState, currentSlotKey);
   const hasChanges = hasNotableChanges(changes);
   let notificationSent = false;
+
+  const hourlyReason = !isNotificationTime
+    ? "outside hourly notification window"
+    : shouldSendHourly
+      ? "new hourly slot"
+      : "slot already notified";
+
+  logMessage("waNotification", clientId, "hourlySlotEvaluation", "completed", countsBefore, countsAfter,
+    `Hourly slot decision`, {
+      currentSlotKey,
+      lastNotifiedSlot: schedulerState.lastNotifiedSlot || null,
+      isNotificationTime,
+      shouldSendHourly,
+      hourlyReason,
+      hasChanges,
+    });
 
   // conservative fallback if state storage unavailable: don't do hourly-only sends
   const shouldNotify = stateStorageHealthy ? (hasChanges || shouldSendHourly) : hasChanges;
@@ -273,7 +337,7 @@ export async function processClient(client, options = {}) {
         : "State storage unavailable, hourly notifications disabled (conservative mode)");
   }
 
-  const nextSchedulerState = buildNextSchedulerState(schedulerState, countsAfter, notificationSent);
+  const nextSchedulerState = buildNextSchedulerState(schedulerState, countsAfter, notificationSent, currentSlotKey);
   if (stateStorageHealthy) {
     try {
       const persistedState = await upsertSchedulerState(nextSchedulerState);

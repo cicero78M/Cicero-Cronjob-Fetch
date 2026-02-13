@@ -221,14 +221,16 @@ State sekarang dipersistenkan ke tabel PostgreSQL `wa_notification_scheduler_sta
 - `last_ig_count`
 - `last_tiktok_count`
 - `last_notified_at`
+- `last_notified_slot`
 
 ### Alur state pada `runCron`
 
 1. Saat run dimulai, worker memuat state semua `client_id` aktif dari database.
 2. Worker tetap menjalankan fetch post + refresh engagement seperti biasa.
 3. Setelah fetch selesai, perubahan dihitung dari state tersimpan vs hitungan terbaru.
-4. Jika notifikasi berhasil terkirim, `last_notified_at` diupdate ke timestamp saat ini.
-5. State terbaru di-upsert per client (satu query `INSERT ... ON CONFLICT ... DO UPDATE`) sehingga update bersifat atomik di level row.
+4. Worker membentuk `currentSlotKey` berbasis waktu Jakarta (`YYYY-MM-DD-HH@05`) dan membandingkannya dengan `last_notified_slot`.
+5. Jika notifikasi berhasil di-enqueue, `last_notified_at` dan `last_notified_slot` diupdate. Jika enqueue gagal/tidak terkirim, slot tidak diubah agar tidak terkunci.
+6. State terbaru di-upsert per client (satu query `INSERT ... ON CONFLICT ... DO UPDATE`) sehingga update bersifat atomik di level row.
 
 
 ## Pengaturan Concurrency & Deadline `runCron`
