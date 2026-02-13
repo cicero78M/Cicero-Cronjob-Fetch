@@ -163,6 +163,21 @@ Apakah Anda ingin menambah atau mengubah data akun resmi Satbinmas? Balas *ya* u
 
 Menu operator ini membantu mengelola user dan memantau laporan secara cepat melalui WhatsApp.
 
+
+## Guard Stale Reply untuk Validator Async Profil
+- Session *client request* kini membawa `sessionVersion` per `chatId` agar balasan async tidak salah konteks ketika user cepat berpindah state/menu.
+- Saat state berpindah (contoh `awaiting_instagram` ke `main_menu`), handler wajib memanggil helper transisi yang otomatis *increment* `sessionVersion` hanya ketika state benar-benar berubah.
+- Saat proses async validator dimulai (cek duplikat username Instagram/TikTok/dll), simpan snapshot `versionAtStart`.
+- Sebelum mengirim balasan async, bandingkan `versionAtStart` dengan versi sesi terbaru. Jika berbeda, balasan dianggap **stale** dan harus dibatalkan.
+- Logging validator async menggunakan format terstruktur berikut agar mudah *trace*:
+  - `chatId`
+  - `messageId`
+  - `state`
+  - `versionAtStart`
+  - `currentVersion`
+  - `droppedAsStale`
+- Mekanisme ini berlaku untuk semua validator async (Instagram, TikTok, dan validator async field lain), bukan hanya satu field tertentu.
+
 ## Readiness Check Client WA
 - Sistem mengecek kesiapan koneksi dengan `client.isReady()` dan hanya
   menandai *ready* jika hasilnya boolean `true`, sehingga status tidak
