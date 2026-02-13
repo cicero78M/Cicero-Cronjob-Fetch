@@ -420,10 +420,9 @@ export async function fetchAndStoreTiktokContent(
         client_id: client.id,
         video_id: post.id || post.video_id,
         caption: post.desc || post.caption || "",
-        created_at:
-          typeof (post.createTime || post.create_time) === "number"
-            ? new Date((post.createTime || post.create_time) * 1000)
-            : null,
+        created_at: parseCreatedAt(
+          post.createTime || post.create_time || post.timestamp
+        ),
         like_count:
           post.stats?.diggCount ?? post.digg_count ?? post.like_count ?? 0,
         comment_count: post.stats?.commentCount ?? post.comment_count ?? 0,
