@@ -66,6 +66,16 @@ This prevents false positives from temporary network issues and ensures the coun
 
 ## Configuration
 
+### Single session ownership
+
+Pastikan kepemilikan sesi WhatsApp bersifat **single owner** pada level runtime host.
+
+Aturan wajib:
+
+1. `WA_AUTH_DATA_PATH` **harus unik** per aplikasi/proses runtime.
+2. `GATEWAY_WA_CLIENT_ID` dan `LOG_CLIENT_ID` **tidak boleh bentrok** dengan service lain pada host yang sama.
+3. Satu kombinasi `WA_AUTH_DATA_PATH + client_id` hanya boleh dipakai oleh satu instance aktif.
+
 ### Error Threshold
 
 The default threshold is 2 consecutive Bad MAC errors (reduced from 3 for faster recovery). This is defined as:
@@ -88,9 +98,36 @@ When recovery is triggered, the adapter automatically clears the session by:
 - Creating a fresh authentication directory
 - Reconnecting and re-authenticating with WhatsApp
 
+### Contoh `.env` production (benar)
+
+Gunakan path auth yang spesifik app dan ID client yang unik antar service:
+
+```env
+NODE_ENV=production
+
+# Wajib unik per aplikasi/proses
+WA_AUTH_DATA_PATH=/var/lib/cicero-v2/baileys_auth
+
+# Wajib unik pada host yang sama (hindari collision lintas service)
+GATEWAY_WA_CLIENT_ID=wa-gateway-cicero-v2-prod
+LOG_CLIENT_ID=wa-log-cicero-v2-prod
+```
+
 ## Monitoring
 
 ### Log Messages
+
+#### Gejala log yang cocok dengan masalah ini (contoh dari log produksi)
+
+Jika menemukan salah satu/lebih string berikut, anggap ada indikasi kuat session corruption atau session collision:
+
+```text
+Session error:Error: Bad MAC Error: Bad MAC
+[BAILEYS] Bad MAC error detected in decryption layer (1/2): Failed to decrypt message with any known session
+[BAILEYS] Bad MAC error detected in decryption layer (2/2) [RAPID]: Bad MAC Error: Bad MAC
+[BAILEYS] Too many Bad MAC errors detected, scheduling reinitialization (reason: Rapid Bad MAC errors in decryption (0s between errors))
+[BAILEYS] Reinitializing clientId=wa-gateway after bad-mac-error (2 consecutive MAC failures) (clear session).
+```
 
 **Detection at Logger Level (NEW - Primary):**
 ```
@@ -175,6 +212,12 @@ pm2 start cicero_v2
 
 # Scan the QR code when prompted
 ```
+
+### Checklist verifikasi deploy
+
+- [ ] Verifikasi instance PM2 tidak duplikat untuk sesi yang sama (`pm2 list`, cek nama app/proses clone/duplicate).
+- [ ] Verifikasi path auth writable oleh user runtime dan tidak dishare antar app (`WA_AUTH_DATA_PATH` unik, permission benar).
+- [ ] Jika Bad MAC persisten, lakukan clear session aman: stop instance terkait → backup/hapus folder sesi untuk client tersebut saja → start ulang → relink QR bila diminta.
 
 ### Prevent Bad MAC Errors
 
