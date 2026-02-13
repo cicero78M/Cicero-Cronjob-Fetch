@@ -76,7 +76,6 @@ export async function markOutboxSent(outboxId) {
      SET status = 'sent',
          sent_at = NOW(),
          error_message = NULL,
-         next_attempt_at = NULL,
          updated_at = NOW()
      WHERE outbox_id = $1`,
     [outboxId]
