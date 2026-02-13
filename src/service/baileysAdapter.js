@@ -108,7 +108,10 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   let lastMacErrorTime = 0;
   const MAC_ERROR_RESET_TIMEOUT = 60000; // Reset counter after 60 seconds without errors
   const MAC_ERROR_RAPID_THRESHOLD = 5000; // If errors occur within 5 seconds, consider it rapid/serious
+  const MAC_ERROR_BURST_THRESHOLD = 1000; // If errors occur within 1 second, it's a burst (immediate action)
   let lockHeldByCurrentProcess = false;
+  let lastRecoveryAttemptTime = 0;
+  const RECOVERY_COOLDOWN = 30000; // Don't attempt recovery more than once every 30 seconds
 
   const readSessionLock = async () => {
     try {
@@ -212,12 +215,16 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   };
 
   /**
-   * Handle Bad MAC errors detected in logger output
+   * Handle Bad MAC errors detected in logger output or message processing
+   * @param {string} errorMsg - The error message
+   * @param {string} source - Source of the error ('logger' or 'message')
+   * @param {string} [senderJid] - JID of the sender (for message-level errors)
    */
-  const handleBadMacError = (errorMsg) => {
+  const handleBadMacError = (errorMsg, source = 'logger', senderJid = null) => {
     const now = Date.now();
     const previousErrorTime = lastMacErrorTime;
     const timeSinceLastError = previousErrorTime > 0 ? now - previousErrorTime : 0;
+    const timeSinceLastRecovery = lastRecoveryAttemptTime > 0 ? now - lastRecoveryAttemptTime : Infinity;
     
     // Reset counter if too much time has passed
     if (previousErrorTime > 0 && timeSinceLastError > MAC_ERROR_RESET_TIMEOUT) {
@@ -227,31 +234,55 @@ export async function createBaileysClient(clientId = 'wa-admin') {
       consecutiveMacErrors = 0;
     }
     
+    // Check if we're in a cooldown period to prevent excessive recovery attempts
+    if (timeSinceLastRecovery < RECOVERY_COOLDOWN) {
+      console.warn(
+        `[BAILEYS] Bad MAC error detected but in recovery cooldown (${Math.round((RECOVERY_COOLDOWN - timeSinceLastRecovery)/1000)}s remaining), skipping recovery`
+      );
+      return;
+    }
+    
     consecutiveMacErrors++;
     lastMacErrorTime = now;
     
+    const isBurstError = previousErrorTime > 0 && timeSinceLastError < MAC_ERROR_BURST_THRESHOLD;
     const isRapidError = previousErrorTime > 0 && timeSinceLastError < MAC_ERROR_RAPID_THRESHOLD;
     
+    const errorType = isBurstError ? '[BURST]' : (isRapidError ? '[RAPID]' : '');
+    const senderInfo = senderJid ? ` from ${senderJid}` : '';
+    
     console.error(
-      `[BAILEYS] Bad MAC error detected in decryption layer (${consecutiveMacErrors}/${MAX_CONSECUTIVE_MAC_ERRORS})${isRapidError ? ' [RAPID]' : ''}:`,
+      `[BAILEYS] Bad MAC error detected in ${source} (${consecutiveMacErrors}/${MAX_CONSECUTIVE_MAC_ERRORS})${errorType}${senderInfo}:`,
       errorMsg
     );
     
-    // Trigger recovery if threshold reached or rapid errors detected
+    // Trigger recovery if:
+    // 1. We've hit the threshold for consecutive errors, OR
+    // 2. We're getting rapid errors (within 5 seconds), OR
+    // 3. We're getting burst errors (within 1 second) - immediate action
     const shouldRecover = consecutiveMacErrors >= MAX_CONSECUTIVE_MAC_ERRORS || 
-                         (isRapidError && consecutiveMacErrors >= 1);
+                         (isRapidError && consecutiveMacErrors >= 1) ||
+                         isBurstError; // Burst errors trigger immediate recovery
     
     if (shouldRecover && !reinitInProgress) {
-      const reason = isRapidError 
-        ? `Rapid Bad MAC errors in decryption (${Math.round(timeSinceLastError/1000)}s between errors)`
-        : `${MAX_CONSECUTIVE_MAC_ERRORS} consecutive MAC failures in decryption`;
+      let reason;
+      if (isBurstError) {
+        reason = `Burst Bad MAC errors in ${source} (${timeSinceLastError}ms between errors) - immediate recovery`;
+      } else if (isRapidError) {
+        reason = `Rapid Bad MAC errors in ${source} (${Math.round(timeSinceLastError/1000)}s between errors)`;
+      } else {
+        reason = `${MAX_CONSECUTIVE_MAC_ERRORS} consecutive MAC failures in ${source}`;
+      }
       
       console.warn(
         `[BAILEYS] Too many Bad MAC errors detected, scheduling reinitialization (reason: ${reason})`
       );
       
+      lastRecoveryAttemptTime = now;
+      
       // Schedule reinitialization asynchronously to avoid blocking
-      setImmediate(async () => {
+      // For burst errors, use immediate execution; for others, use setImmediate
+      const executeRecovery = async () => {
         if (!reinitInProgress) {
           try {
             await reinitializeClient(
@@ -263,9 +294,21 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             lastMacErrorTime = 0;
           } catch (err) {
             console.error('[BAILEYS] Failed to reinitialize after Bad MAC:', err?.message || err);
+            // Reset recovery attempt time on failure to allow retry after cooldown
+            lastRecoveryAttemptTime = 0;
           }
         }
-      });
+      };
+      
+      if (isBurstError) {
+        // For burst errors, execute immediately
+        executeRecovery().catch(err => {
+          console.error('[BAILEYS] Error during immediate recovery:', err?.message || err);
+        });
+      } else {
+        // For normal errors, use setImmediate
+        setImmediate(executeRecovery);
+      }
     }
   };
 
@@ -322,7 +365,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
 
           if (matchedPattern) {
             // Handle Bad MAC error asynchronously (single trigger per log event)
-            setImmediate(() => handleBadMacError(combinedErrorText));
+            setImmediate(() => handleBadMacError(combinedErrorText, 'logger'));
             console.warn(`[BAILEYS-LOGGER] Matched pattern "${matchedPattern}", forwarding to Bad MAC handler`);
             // Always log Bad MAC errors to console for visibility
             console.error('[BAILEYS-LOGGER] Bad MAC error detected:', combinedErrorText);
@@ -440,11 +483,21 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             
             if (isBadMacError) {
               const now = Date.now();
-              const previousErrorTime = lastMacErrorTime; // Store previous time before updating
+              const previousErrorTime = lastMacErrorTime;
+              const timeSinceLastRecovery = lastRecoveryAttemptTime > 0 ? now - lastRecoveryAttemptTime : Infinity;
+              
+              // Check if we're in a cooldown period
+              if (timeSinceLastRecovery < RECOVERY_COOLDOWN) {
+                console.warn(
+                  `[BAILEYS] Bad MAC error in connection handler but in recovery cooldown (${Math.round((RECOVERY_COOLDOWN - timeSinceLastRecovery)/1000)}s remaining)`
+                );
+                return;
+              }
               
               // Check if this is a rapid error (within 5 seconds of previous error)
-              const isRapidError = previousErrorTime > 0 && (now - previousErrorTime) < MAC_ERROR_RAPID_THRESHOLD;
               const timeSinceLastError = previousErrorTime > 0 ? now - previousErrorTime : 0;
+              const isBurstError = previousErrorTime > 0 && timeSinceLastError < MAC_ERROR_BURST_THRESHOLD;
+              const isRapidError = previousErrorTime > 0 && timeSinceLastError < MAC_ERROR_RAPID_THRESHOLD;
               
               // Reset counter if too much time has passed since last error (errors are not consecutive)
               if (previousErrorTime > 0 && timeSinceLastError > MAC_ERROR_RESET_TIMEOUT) {
@@ -455,27 +508,38 @@ export async function createBaileysClient(clientId = 'wa-admin') {
               }
               
               consecutiveMacErrors++;
-              lastMacErrorTime = now; // Update timestamp after storing previous value
+              lastMacErrorTime = now;
+              
+              const errorType = isBurstError ? '[BURST]' : (isRapidError ? '[RAPID]' : '');
               
               console.error(
-                `[BAILEYS] Bad MAC error detected (${consecutiveMacErrors}/${MAX_CONSECUTIVE_MAC_ERRORS})${isRapidError ? ' [RAPID]' : ''}:`,
+                `[BAILEYS] Bad MAC error in connection handler (${consecutiveMacErrors}/${MAX_CONSECUTIVE_MAC_ERRORS})${errorType}:`,
                 errorMessage
               );
               
               // Trigger recovery if:
               // 1. We've hit the threshold for consecutive errors, OR
-              // 2. We're getting rapid errors (sign of serious corruption)
+              // 2. We're getting rapid errors (sign of serious corruption), OR
+              // 3. We're getting burst errors (immediate action needed)
               const shouldRecover = consecutiveMacErrors >= MAX_CONSECUTIVE_MAC_ERRORS || 
-                                   (isRapidError && consecutiveMacErrors >= 1);
+                                   (isRapidError && consecutiveMacErrors >= 1) ||
+                                   isBurstError;
               
               if (shouldRecover && !reinitInProgress) {
-                const reason = isRapidError 
-                  ? `Rapid Bad MAC errors (${Math.round(timeSinceLastError/1000)}s between errors)`
-                  : `${MAX_CONSECUTIVE_MAC_ERRORS} consecutive MAC failures`;
+                let reason;
+                if (isBurstError) {
+                  reason = `Burst Bad MAC errors in connection (${timeSinceLastError}ms between errors) - immediate recovery`;
+                } else if (isRapidError) {
+                  reason = `Rapid Bad MAC errors in connection (${Math.round(timeSinceLastError/1000)}s between errors)`;
+                } else {
+                  reason = `${MAX_CONSECUTIVE_MAC_ERRORS} consecutive MAC failures in connection`;
+                }
                 
                 console.warn(
-                  `[BAILEYS] Too many Bad MAC errors, reinitializing with session clear (reason: ${reason})`
+                  `[BAILEYS] Too many Bad MAC errors in connection, reinitializing with session clear (reason: ${reason})`
                 );
+                
+                lastRecoveryAttemptTime = now;
                 
                 // Reinitialize with session clear, reset counter after successful trigger
                 await reinitializeClient(
@@ -523,14 +587,34 @@ export async function createBaileysClient(clientId = 'wa-admin') {
 
               emitter.emit('message', transformedMessage);
             } catch (error) {
-              // Log any errors during message processing
-              // Bad MAC errors will be handled by the logger-level handler
+              // Detect Bad MAC errors during message processing
               const errorMessage = error?.message || String(error);
-              console.error(
-                '[BAILEYS] Error processing message:',
-                errorMessage,
-                `from ${msg.key?.remoteJid || 'unknown'}`
-              );
+              const errorStack = error?.stack || '';
+              const senderJid = msg.key?.remoteJid || 'unknown';
+              
+              const isBadMacError = errorMessage.includes('Bad MAC') || 
+                                   errorStack.includes('Bad MAC') ||
+                                   errorMessage.includes('Failed to decrypt message');
+              
+              if (isBadMacError) {
+                console.error(
+                  '[BAILEYS] Bad MAC error during message decryption from',
+                  senderJid,
+                  ':',
+                  errorMessage
+                );
+                
+                // Handle Bad MAC error through centralized handler
+                handleBadMacError(errorMessage, 'message', senderJid);
+              } else {
+                // Log non-MAC errors normally
+                console.error(
+                  '[BAILEYS] Error processing message from',
+                  senderJid,
+                  ':',
+                  errorMessage
+                );
+              }
             }
           }
         });
@@ -605,7 +689,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   };
 
   /**
-   * Reinitialize client
+   * Reinitialize client with enhanced session clearing
    */
   const reinitializeClient = async (trigger, reason, options = {}) => {
     if (reinitInProgress) {
@@ -626,19 +710,44 @@ export async function createBaileysClient(clientId = 'wa-admin') {
     );
 
     try {
-      // Close existing connection
+      // Close existing connection gracefully
       if (sock) {
-        sock.end();
+        try {
+          sock.end();
+        } catch (err) {
+          console.warn('[BAILEYS] Error closing socket:', err?.message || err);
+        }
         sock = null;
       }
 
-      // Clear session if requested
+      // Clear reconnect timeout
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
+      }
+
+      // Clear session if requested (especially for Bad MAC errors)
       if (shouldClearSession) {
         try {
           await releaseSessionLock();
-          await rm(sessionPath, { recursive: true, force: true });
-          fs.mkdirSync(sessionPath, { recursive: true });
-          console.warn(`[BAILEYS] Cleared auth session for clientId=${clientId} at ${sessionPath}.`);
+          
+          // More aggressive session clearing for Bad MAC errors
+          if (trigger.includes('bad-mac')) {
+            console.warn(`[BAILEYS] Performing aggressive session clear for Bad MAC error`);
+            
+            // Remove the entire session directory
+            await rm(sessionPath, { recursive: true, force: true });
+            
+            // Recreate the directory
+            fs.mkdirSync(sessionPath, { recursive: true });
+            
+            console.warn(`[BAILEYS] Cleared and recreated auth session for clientId=${clientId} at ${sessionPath}.`);
+          } else {
+            // Normal session clear
+            await rm(sessionPath, { recursive: true, force: true });
+            fs.mkdirSync(sessionPath, { recursive: true });
+            console.warn(`[BAILEYS] Cleared auth session for clientId=${clientId} at ${sessionPath}.`);
+          }
         } catch (err) {
           console.warn(
             `[BAILEYS] Failed to clear auth session for clientId=${clientId}:`,
@@ -647,8 +756,17 @@ export async function createBaileysClient(clientId = 'wa-admin') {
         }
       }
 
+      // Add a small delay before reconnecting to ensure clean state
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
       // Reconnect
       await startConnect(`reinitialize:${trigger}`);
+    } catch (err) {
+      console.error(
+        `[BAILEYS] Error during reinitialization for clientId=${clientId}:`,
+        err?.message || err
+      );
+      throw err;
     } finally {
       reinitInProgress = false;
     }
