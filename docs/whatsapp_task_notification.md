@@ -270,7 +270,7 @@ Tabel `wa_notification_outbox` menyimpan antrian notifikasi dengan kolom penting
 - `status`: `pending`, `retrying`, `processing`, `sent`, `dead_letter`
 - `idempotency_key`: kunci deduplikasi agar pesan tidak terkirim ganda
 - `attempt_count` dan `max_attempts`: kontrol retry
-- `next_attempt_at`: jadwal percobaan ulang berikutnya; saat status menjadi `dead_letter`, kolom ini diisi timestamp final (`NOW()`) untuk menjaga jejak waktu percobaan terakhir
+- `next_attempt_at`: jadwal percobaan ulang berikutnya; saat status menjadi `dead_letter`, kolom ini diisi timestamp final (`NOW()`) untuk menjaga jejak waktu percobaan terakhir. Saat status berubah ke `sent`, nilai `next_attempt_at` dipertahankan (tidak di-`NULL`-kan) untuk menjaga histori lifecycle outbox.
 - `sent_at`: timestamp sukses terkirim
 - `error_message`: error terakhir saat gagal kirim
 
