@@ -268,7 +268,16 @@ export async function createBaileysClient(clientId = 'wa-admin') {
     const isRapidError = previousErrorTime > 0 && timeSinceLastError < MAC_ERROR_RAPID_THRESHOLD;
     const isForcedRecovery = errorsDuringCooldown >= MAX_ERRORS_DURING_COOLDOWN;
     
-    const errorType = isForcedRecovery ? '[FORCED]' : (isBurstError ? '[BURST]' : (isRapidError ? '[RAPID]' : ''));
+    // Determine error type label for logging
+    let errorType = '';
+    if (isForcedRecovery) {
+      errorType = '[FORCED]';
+    } else if (isBurstError) {
+      errorType = '[BURST]';
+    } else if (isRapidError) {
+      errorType = '[RAPID]';
+    }
+    
     const senderInfo = senderJid ? ` from ${senderJid}` : '';
     
     console.error(
@@ -766,6 +775,9 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             if (fs.existsSync(sessionPath)) {
               console.warn(`[BAILEYS] Removing session directory: ${sessionPath}`);
               await rm(sessionPath, { recursive: true, force: true });
+              
+              // Add small delay to ensure async file system operations complete
+              await new Promise(resolve => setTimeout(resolve, 100));
               
               // Verify it was removed
               if (fs.existsSync(sessionPath)) {
