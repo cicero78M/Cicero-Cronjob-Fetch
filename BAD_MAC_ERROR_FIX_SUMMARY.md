@@ -33,6 +33,28 @@ The existing error handling only caught Bad MAC errors at the **connection level
 
 ## Solution Implemented
 
+### 0. Logger Hook Hardening for Production Error Shapes (Latest)
+**Enhancement**: Improved the custom Pino `logMethod` hook in `src/service/baileysAdapter.js` to inspect **all** logger arguments (`inputArgs`) and normalize multiple message candidates before pattern matching.
+
+**What changed**:
+- No longer depends only on `inputArgs[0]`.
+- Extracts candidates from:
+  - plain string args,
+  - `msg` / `message`,
+  - nested `err.message`,
+  - serialized object payloads.
+- Normalizes all extracted candidates to lowercase and joins them for robust matching.
+- Adds explicit production patterns:
+  - `failed to decrypt message with any known session`
+  - `session error`
+  - `bad mac`
+- Ensures `handleBadMacError(...)` is called once per intercepted logger event and emits a concise internal logger diagnostic line.
+
+**Benefits**:
+- Captures real-world Baileys/libsignal error formats spread across second/third log arguments.
+- Reduces missed Bad MAC detections from structured log objects.
+- Prevents accidental duplicate recovery triggers from a single logger event.
+
 ### 1. Added Message-Level Error Detection
 **Enhancement**: Added try-catch block in the `messages.upsert` event handler to catch Bad MAC errors during message decryption.
 
