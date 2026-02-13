@@ -1,4 +1,7 @@
 import { jest } from '@jest/globals';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 // Mock event emitter for Baileys socket
 const mockSocketEvents = {};
@@ -20,6 +23,11 @@ const mockSocket = {
 };
 
 // Mock Baileys
+const mockUseMultiFileAuthState = jest.fn().mockResolvedValue({
+  state: { creds: {}, keys: {} },
+  saveCreds: jest.fn(),
+});
+
 jest.unstable_mockModule('@whiskeysockets/baileys', () => ({
   default: jest.fn(() => mockSocket),
   DisconnectReason: {
@@ -31,10 +39,7 @@ jest.unstable_mockModule('@whiskeysockets/baileys', () => ({
     restartRequired: 515,
     timedOut: 408,
   },
-  useMultiFileAuthState: jest.fn().mockResolvedValue({
-    state: { creds: {}, keys: {} },
-    saveCreds: jest.fn(),
-  }),
+  useMultiFileAuthState: mockUseMultiFileAuthState,
   fetchLatestBaileysVersion: jest.fn().mockResolvedValue({
     version: [2, 2412, 54],
     isLatest: true,
@@ -543,4 +548,50 @@ test('baileys logger handles plain string failed to decrypt without double trigg
   expect(badMacDetectionCalls).toHaveLength(1);
 
   consoleErrorSpy.mockRestore();
+});
+
+test('baileys adapter blocks connect when session lock belongs to another active process', async () => {
+  const tempAuthPath = fs.mkdtempSync(path.join(os.tmpdir(), 'baileys-lock-test-'));
+  process.env.WA_AUTH_DATA_PATH = tempAuthPath;
+  const ownerPid = 424242;
+  const processKillSpy = jest.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (pid === ownerPid && signal === 0) {
+      return true;
+    }
+    const err = new Error('No such process');
+    err.code = 'ESRCH';
+    throw err;
+  });
+
+  const client = await createBaileysClient('test-client');
+  activeClients.push(client);
+
+  const lockPath = path.join(client.getSessionPath(), '.session.lock');
+  fs.writeFileSync(
+    lockPath,
+    JSON.stringify(
+      {
+        pid: ownerPid,
+        hostname: 'test-host',
+        startedAt: new Date().toISOString(),
+        clientId: 'test-client',
+      },
+      null,
+      2
+    )
+  );
+
+  await expect(client.connect()).rejects.toThrow(
+    /\[BAILEYS\] Shared session lock detected.*lockPath=.*\.session\.lock.*pid=/
+  );
+  await expect(client.connect()).rejects.toMatchObject({
+    code: 'WA_BAILEYS_SHARED_SESSION_LOCK',
+    lockPath,
+    ownerPid,
+  });
+  expect(mockUseMultiFileAuthState).not.toHaveBeenCalled();
+
+  await client.disconnect();
+  fs.rmSync(tempAuthPath, { recursive: true, force: true });
+  processKillSpy.mockRestore();
 });

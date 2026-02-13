@@ -17,6 +17,8 @@ const debugLoggingEnabled = process.env.WA_DEBUG_LOGGING === 'true';
 
 const DEFAULT_AUTH_DATA_DIR = 'baileys_auth';
 const DEFAULT_AUTH_DATA_PARENT_DIR = '.cicero';
+const SESSION_LOCK_FILE_NAME = '.session.lock';
+const SHUTDOWN_SIGNALS = ['SIGINT', 'SIGTERM'];
 
 function resolveDefaultAuthDataPath() {
   const homeDir = os.homedir?.();
@@ -38,6 +40,30 @@ function shouldClearAuthSession() {
   return process.env.WA_AUTH_CLEAR_SESSION_ON_REINIT === 'true';
 }
 
+function isProcessRunning(pid) {
+  if (!pid || pid === process.pid) {
+    return false;
+  }
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+function buildSessionLockGuardMessage({ clientId, sessionPath, lockPath, lockMetadata }) {
+  const pid = lockMetadata?.pid ?? 'unknown';
+  const reason = lockMetadata?.pid ? `pid=${lockMetadata.pid}` : 'active lock';
+  return (
+    `[BAILEYS] Shared session lock detected for clientId=${clientId} ` +
+    `(sessionPath=${sessionPath}, lockPath=${lockPath}, reason=${reason}, pid=${pid}). ` +
+    'Another process appears to be using this session. ' +
+    'Use distinct WA_AUTH_DATA_PATH per process to avoid lock contention.'
+  );
+}
+
 /**
  * Create a Baileys WhatsApp client
  * @param {string} clientId - Unique identifier for the client
@@ -49,6 +75,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
 
   const authBasePath = resolveAuthDataPath();
   const sessionPath = path.join(authBasePath, clientId);
+  const sessionLockPath = path.join(sessionPath, SESSION_LOCK_FILE_NAME);
   const clearAuthSession = shouldClearAuthSession();
 
   // Create auth directory if it doesn't exist
@@ -81,6 +108,108 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   let lastMacErrorTime = 0;
   const MAC_ERROR_RESET_TIMEOUT = 60000; // Reset counter after 60 seconds without errors
   const MAC_ERROR_RAPID_THRESHOLD = 5000; // If errors occur within 5 seconds, consider it rapid/serious
+  let lockHeldByCurrentProcess = false;
+
+  const readSessionLock = async () => {
+    try {
+      const rawLock = await fs.promises.readFile(sessionLockPath, 'utf8');
+      const parsed = JSON.parse(rawLock);
+      const parsedPid = Number.parseInt(String(parsed?.pid || ''), 10);
+
+      return {
+        pid: Number.isNaN(parsedPid) ? null : parsedPid,
+        hostname: parsed?.hostname || null,
+        startedAt: parsed?.startedAt || null,
+        clientId: parsed?.clientId || null,
+      };
+    } catch (err) {
+      if (err?.code === 'ENOENT') {
+        return null;
+      }
+      console.warn(`[BAILEYS] Failed to read session lock at ${sessionLockPath}:`, err?.message || err);
+      return null;
+    }
+  };
+
+  const removeSessionLock = async () => {
+    try {
+      await fs.promises.unlink(sessionLockPath);
+      lockHeldByCurrentProcess = false;
+      console.log(`[BAILEYS] Released session lock for clientId=${clientId} at ${sessionLockPath}`);
+      return true;
+    } catch (err) {
+      if (err?.code === 'ENOENT') {
+        lockHeldByCurrentProcess = false;
+        return true;
+      }
+      console.warn(`[BAILEYS] Failed to remove session lock at ${sessionLockPath}:`, err?.message || err);
+      return false;
+    }
+  };
+
+  const writeSessionLock = async () => {
+    const lockMetadata = {
+      pid: process.pid,
+      hostname: os.hostname(),
+      startedAt: new Date().toISOString(),
+      clientId,
+    };
+    const payload = `${JSON.stringify(lockMetadata, null, 2)}\n`;
+
+    try {
+      await fs.promises.writeFile(sessionLockPath, payload, { flag: 'wx' });
+      lockHeldByCurrentProcess = true;
+      return;
+    } catch (err) {
+      if (err?.code !== 'EEXIST') {
+        throw err;
+      }
+    }
+
+    const existingLock = await readSessionLock();
+
+    if (existingLock?.pid === process.pid) {
+      await fs.promises.writeFile(sessionLockPath, payload, 'utf8');
+      lockHeldByCurrentProcess = true;
+      return;
+    }
+
+    if (existingLock?.pid && isProcessRunning(existingLock.pid)) {
+      const lockError = new Error(
+        buildSessionLockGuardMessage({
+          clientId,
+          sessionPath,
+          lockPath: sessionLockPath,
+          lockMetadata: existingLock,
+        })
+      );
+      lockError.code = 'WA_BAILEYS_SHARED_SESSION_LOCK';
+      lockError.lockPath = sessionLockPath;
+      lockError.ownerPid = existingLock.pid;
+      throw lockError;
+    }
+
+    await removeSessionLock();
+    await fs.promises.writeFile(sessionLockPath, payload, { flag: 'wx' });
+    lockHeldByCurrentProcess = true;
+    console.warn(
+      `[BAILEYS] Removed stale session lock for clientId=${clientId} and acquired a new lock at ${sessionLockPath}`
+    );
+  };
+
+  const releaseSessionLock = async () => {
+    const existingLock = await readSessionLock();
+
+    if (!existingLock && !lockHeldByCurrentProcess) {
+      return;
+    }
+
+    if (existingLock?.pid && existingLock.pid !== process.pid && isProcessRunning(existingLock.pid)) {
+      return;
+    }
+
+    await removeSessionLock();
+  };
 
   /**
    * Handle Bad MAC errors detected in logger output
@@ -226,6 +355,8 @@ export async function createBaileysClient(clientId = 'wa-admin') {
 
     connectInProgress = (async () => {
       try {
+        await writeSessionLock();
+
         // Load auth state from file system
         console.log(`[BAILEYS] Loading auth state from: ${sessionPath}`);
         const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
@@ -504,6 +635,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
       // Clear session if requested
       if (shouldClearSession) {
         try {
+          await releaseSessionLock();
           await rm(sessionPath, { recursive: true, force: true });
           fs.mkdirSync(sessionPath, { recursive: true });
           console.warn(`[BAILEYS] Cleared auth session for clientId=${clientId} at ${sessionPath}.`);
@@ -548,6 +680,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
       sock.end();
       sock = null;
     }
+    await releaseSessionLock();
   };
 
   emitter.getNumberId = async (phone) => {
@@ -680,6 +813,24 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   emitter.sessionPath = sessionPath;
   emitter.getSessionPath = () => sessionPath;
   emitter.fatalInitError = null;
+
+  const shutdownHandler = () => {
+    releaseSessionLock().catch((err) => {
+      console.warn('[BAILEYS] Failed to release session lock during shutdown:', err?.message || err);
+    });
+  };
+
+  for (const signal of SHUTDOWN_SIGNALS) {
+    process.on(signal, shutdownHandler);
+  }
+
+  const originalDisconnect = emitter.disconnect;
+  emitter.disconnect = async () => {
+    await originalDisconnect();
+    for (const signal of SHUTDOWN_SIGNALS) {
+      process.off(signal, shutdownHandler);
+    }
+  };
 
   console.log(`[BAILEYS] Client created for clientId=${clientId}`);
 
