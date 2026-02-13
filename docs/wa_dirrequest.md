@@ -98,6 +98,7 @@ dirrequest tanpa langkah tambahan.
   TIME ZONE 'Asia/Jakarta')::date` dengan parameter *reference date* opsional
   (default ke *Jakarta now*) sehingga label periode dan filter query selalu
   selaras, termasuk ketika server berjalan di luar WIB.
+- Standar penyimpanan `tiktok_post.created_at` kini memakai **TIMESTAMPTZ (UTC canonical)**. Konversi ke WIB hanya dilakukan saat filter/query pelaporan (`AT TIME ZONE 'Asia/Jakarta'`) agar timestamp mentah tidak lagi ambigu ketika dibaca lintas environment.
 - Alur menu dapat memasok `referenceDate` (mis. menyimpan `session.referenceDate`
   atau `session.dirRequestReferenceDate`) untuk memaksa label periode, rentang
   minggu, serta parameter query memakai tanggal eksekusi yang diinginkan.

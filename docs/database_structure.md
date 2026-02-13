@@ -192,7 +192,7 @@ Profile information for arbitrary Instagram accounts.
 Data for TikTok videos associated with a client.
 - `video_id` – primary key
 - `client_id` – foreign key to `clients`
-- `caption`, `like_count`, `comment_count`, `created_at`
+- `caption`, `like_count`, `comment_count`, `created_at` (`TIMESTAMPTZ`, disimpan dalam UTC dan dikonversi ke zona lokal saat pelaporan)
 
 ### `tiktok_post_roles`
 Restricts TikTok post visibility by role.
