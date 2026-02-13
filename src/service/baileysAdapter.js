@@ -804,7 +804,9 @@ export async function createBaileysClient(clientId = 'wa-admin') {
       await new Promise(resolve => setTimeout(resolve, 2000));
 
       // Reconnect
+      console.warn(`[BAILEYS] Starting reconnection after reinitialization (trigger: ${trigger})`);
       await startConnect(`reinitialize:${trigger}`);
+      console.warn(`[BAILEYS] Successfully reinitialized and reconnected clientId=${clientId}`);
     } catch (err) {
       console.error(
         `[BAILEYS] Error during reinitialization for clientId=${clientId}:`,
