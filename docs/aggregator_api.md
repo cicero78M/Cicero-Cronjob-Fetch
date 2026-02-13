@@ -55,7 +55,8 @@ Backend menggunakan filter awal `findAllActiveDirektoratWithSosmed` sehingga han
 ### TikTok RapidAPI fallback
 
 - Pipeline TikTok terlebih dahulu memanggil host utama RapidAPI (`tiktok-api23.p.rapidapi.com/api/user/posts`). Jika permintaan ini gagal atau mengembalikan daftar kosong, backend otomatis mencoba host cadangan `RAPIDAPI_FALLBACK_HOST` (mis. `tiktok-api6.p.rapidapi.com/user/videos`) menggunakan kunci `RAPIDAPI_FALLBACK_KEY`.
-- Endpoint cadangan diharapkan mengembalikan array pada `videos` atau `result.videos` berisi objek dengan pengenal (`video_id` atau `id`) serta stempel waktu (`create_time` atau `createTime`). Nilai statistik seperti `digg_count`/`comment_count` akan dinormalisasi menjadi `stats.diggCount` dan `stats.commentCount` sebelum disimpan.
+- Endpoint cadangan diharapkan mengembalikan array pada `videos` atau `result.videos` berisi objek dengan pengenal (`video_id` atau `id`) serta stempel waktu (`create_time`, `createTime`, atau `timestamp`). Nilai statistik seperti `digg_count`/`comment_count` akan dinormalisasi menjadi `stats.diggCount` dan `stats.commentCount` sebelum disimpan.
+- Normalisasi `created_at` TikTok kini menggunakan parser terpusat (`parseCreatedAt`) agar unix timestamp bertipe number maupun string tetap terbaca konsisten (termasuk variasi field `timestamp`) tanpa mengubah basis filter harian Asia/Jakarta.
 - Tambahkan variabel lingkungan `RAPIDAPI_FALLBACK_HOST` dan `RAPIDAPI_FALLBACK_KEY` ketika operator ingin memastikan konten TikTok tetap terambil saat host utama bermasalah.
 
 ### Response
