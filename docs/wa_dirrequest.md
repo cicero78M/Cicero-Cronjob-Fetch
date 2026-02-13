@@ -1,5 +1,5 @@
 # Menu DirRequest untuk Operator WA
-*Last updated: 2026-02-13*
+*Last updated: 2026-02-12*
 
 Menu **dirrequest** digunakan tim Ditbinmas untuk memicu pengambilan data,
 rekap, dan laporan langsung dari WhatsApp. Menu utama menampilkan beberapa
@@ -50,23 +50,6 @@ dan baris grand total di bagian bawah.
 Input **4️⃣3️⃣** kini dikenali langsung oleh bot tanpa balasan *"Pilihan tidak
 valid"*, sehingga operator dapat memicu rekap TikTok all data dari menu utama
 dirrequest tanpa langkah tambahan.
-
-## WA Ingress Single-Flight & Deduplication
-- Adapter ingress WhatsApp (`wwebjsAdapter`) sekarang menerapkan **antrian per `chatId`**.
-  Setiap chat diproses serial lewat worker internal agar response hanya dieksekusi
-  dari worker antrian chat (mencegah race-condition antarpesan).
-- State per chat kini menyimpan:
-  - `lastProcessedMessageTimestamp` (timestamp pesan terakhir yang sudah di-commit),
-  - `processedMessageIds` berbasis TTL cache (`WA_INGRESS_PROCESSED_ID_TTL_MS`,
-    default 15 menit),
-  - queue depth aktif per chat.
-- Deduplication mengutamakan `messageId` dari provider. Jika provider tidak konsisten
-  mengirim ID, sistem fallback ke hash: `chatId + normalizedText + roundedTimestampWindow`
-  dengan window `WA_INGRESS_DEDUPE_WINDOW_MS` (default 30 detik).
-- Pesan dengan timestamp lebih lama dari `lastProcessedMessageTimestamp` ditandai
-  sebagai **late message** dan dibuang (tidak memicu transisi state).
-- Metrik ingress tersedia lewat `getIngressMetrics()` pada emitter untuk memantau:
-  total duplicate dropped, total late-message dropped, dan queue depth per chat.
 
 ## Rekaman Snapshot Engagement per 30 Menit
 - Setiap pengambilan likes Instagram dan komentar TikTok yang berjalan lewat
