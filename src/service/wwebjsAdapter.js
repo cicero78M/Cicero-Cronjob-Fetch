@@ -3,6 +3,7 @@ import { rm, readFile, stat } from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import net from 'net';
+import crypto from 'crypto';
 import { EventEmitter } from 'events';
 import pkg from 'whatsapp-web.js';
 
@@ -38,6 +39,42 @@ const PROTOCOL_TIMEOUT_ROLE_ALIASES = [
   { prefix: 'wa-gateway', suffix: 'GATEWAY' },
   { prefix: 'wa-user', suffix: 'USER' },
 ];
+const DEFAULT_INGRESS_FALLBACK_WINDOW_MS = 30000;
+const DEFAULT_INGRESS_PROCESSED_ID_TTL_MS = 15 * 60 * 1000;
+
+
+function normalizeMessageBodyForDedupe(body) {
+  if (typeof body !== 'string') {
+    return '';
+  }
+  return body
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function toMillisTimestamp(rawTimestamp) {
+  if (rawTimestamp === null || rawTimestamp === undefined) {
+    return Date.now();
+  }
+  const numericTimestamp = Number(rawTimestamp);
+  if (!Number.isFinite(numericTimestamp) || numericTimestamp <= 0) {
+    return Date.now();
+  }
+  // whatsapp-web.js msg.timestamp usually in seconds
+  return numericTimestamp < 1_000_000_000_000
+    ? Math.round(numericTimestamp * 1000)
+    : Math.round(numericTimestamp);
+}
+
+function buildFallbackMessageId(chatId, normalizedText, timestampMs, dedupeWindowMs) {
+  const safeWindowMs = Math.max(Number(dedupeWindowMs) || DEFAULT_INGRESS_FALLBACK_WINDOW_MS, 1);
+  const roundedTimestampWindow = Math.floor(timestampMs / safeWindowMs) * safeWindowMs;
+  const raw = `${chatId}|${normalizedText}|${roundedTimestampWindow}`;
+  return `fallback:${crypto.createHash('sha256').update(raw).digest('hex')}`;
+}
+
 
 function resolveDefaultAuthDataPath() {
   const homeDir = os.homedir?.();
@@ -852,6 +889,19 @@ export async function createWwebjsClient(clientId = 'wa-admin') {
   let reinitInProgress = false;
   let connectInProgress = null;
   let connectStartedAt = null;
+  const ingressFallbackWindowMs = Math.max(
+    Number.parseInt(process.env.WA_INGRESS_DEDUPE_WINDOW_MS || '', 10) || DEFAULT_INGRESS_FALLBACK_WINDOW_MS,
+    1000
+  );
+  const ingressProcessedIdTtlMs = Math.max(
+    Number.parseInt(process.env.WA_INGRESS_PROCESSED_ID_TTL_MS || '', 10) || DEFAULT_INGRESS_PROCESSED_ID_TTL_MS,
+    1000
+  );
+  const perChatIngressState = new Map();
+  const ingressMetrics = {
+    duplicateDropped: 0,
+    lateDropped: 0,
+  };
   const webVersionOptions = sanitizeWebVersionOptions(
     await resolveWebVersionOptions()
   );
@@ -1339,6 +1389,84 @@ export async function createWwebjsClient(clientId = 'wa-admin') {
   let internalAuthFailureHandler = null;
   let internalDisconnectedHandler = null;
 
+  const getOrCreateChatIngressState = (chatId) => {
+    const existingState = perChatIngressState.get(chatId);
+    if (existingState) {
+      return existingState;
+    }
+    const createdState = {
+      queue: [],
+      isProcessing: false,
+      queueDepth: 0,
+      lastProcessedMessageTimestamp: 0,
+      processedMessageIds: new Map(),
+    };
+    perChatIngressState.set(chatId, createdState);
+    return createdState;
+  };
+
+  const evictExpiredProcessedMessageIds = (chatState, nowMs) => {
+    for (const [messageKey, expiryTs] of chatState.processedMessageIds.entries()) {
+      if (expiryTs <= nowMs) {
+        chatState.processedMessageIds.delete(messageKey);
+      }
+    }
+  };
+
+  const processChatQueue = async (chatId) => {
+    const chatState = perChatIngressState.get(chatId);
+    if (!chatState || chatState.isProcessing) {
+      return;
+    }
+
+    chatState.isProcessing = true;
+    while (chatState.queue.length > 0) {
+      const nextJob = chatState.queue.shift();
+      chatState.queueDepth = chatState.queue.length;
+      if (nextJob) {
+        try {
+          const messageHandlers = emitter.listeners('message');
+          for (const handler of messageHandlers) {
+            // Execute listeners serially to preserve deterministic single-flight processing per chat
+            await handler(nextJob.message);
+          }
+          const committedTimestampMs = Number(nextJob.messageTimestampMs) || 0;
+          if (committedTimestampMs > chatState.lastProcessedMessageTimestamp) {
+            chatState.lastProcessedMessageTimestamp = committedTimestampMs;
+          }
+        } catch (err) {
+          console.error(
+            `[WWEBJS] Failed processing queued ingress message for chatId=${chatId}:`,
+            err?.message || err
+          );
+        }
+      }
+    }
+
+    chatState.isProcessing = false;
+    chatState.queueDepth = 0;
+  };
+
+  const enqueueIncomingChatMessage = (messageEnvelope) => {
+    const chatId = messageEnvelope?.message?.from;
+    if (!chatId) {
+      return;
+    }
+
+    const chatState = getOrCreateChatIngressState(chatId);
+    chatState.queue.push(messageEnvelope);
+    chatState.queueDepth = chatState.queue.length;
+
+    if (debugLoggingEnabled) {
+      console.log(`[WWEBJS][INGRESS] queueDepth chatId=${chatId}: ${chatState.queueDepth}`);
+    }
+
+    processChatQueue(chatId).catch((err) => {
+      console.error(`[WWEBJS] Queue worker crashed for chatId=${chatId}:`, err?.message || err);
+      chatState.isProcessing = false;
+    });
+  };
+
   const registerEventListeners = () => {
     console.log(`[WWEBJS] Registering event listeners for clientId=${clientId}`);
     // Remove only internal listeners, preserving external ones (e.g., from waService.js)
@@ -1426,18 +1554,73 @@ export async function createWwebjsClient(clientId = 'wa-admin') {
       } catch (err) {
         contactMeta = { error: err?.message || 'contact_fetch_failed' };
       }
-      // ALWAYS log before emitting to emitter (critical for diagnosing reception issues)
-      console.log(`[WWEBJS-ADAPTER] Emitting 'message' event to emitter - clientId=${clientId}, from=${msg.from}`);
+      // ALWAYS log before queueing message (critical for diagnosing reception issues)
+      console.log(`[WWEBJS-ADAPTER] Queueing 'message' event - clientId=${clientId}, from=${msg.from}`);
       if (debugLoggingEnabled) {
         console.log(`[WWEBJS-ADAPTER] Message ID: ${msg.id?.id || msg.id?._serialized || 'unknown'}`);
       }
-      emitter.emit('message', {
-        from: msg.from,
-        body: msg.body,
-        id: msg.id,
-        author: msg.author,
-        timestamp: msg.timestamp,
-        ...contactMeta,
+
+      const chatId = msg.from;
+      const chatState = getOrCreateChatIngressState(chatId);
+      const receivedAtMs = Date.now();
+      evictExpiredProcessedMessageIds(chatState, receivedAtMs);
+
+      const normalizedText = normalizeMessageBodyForDedupe(msg.body);
+      const messageTimestampMs = toMillisTimestamp(msg.timestamp);
+      const providerMessageId = String(msg.id?.id || msg.id?._serialized || '').trim();
+      const dedupeMessageId = providerMessageId || buildFallbackMessageId(
+        chatId,
+        normalizedText,
+        messageTimestampMs,
+        ingressFallbackWindowMs
+      );
+
+      if (chatState.processedMessageIds.has(dedupeMessageId)) {
+        ingressMetrics.duplicateDropped += 1;
+        if (debugLoggingEnabled) {
+          console.log(
+            `[WWEBJS][INGRESS] duplicate dropped chatId=${chatId} messageId=${dedupeMessageId} total=${ingressMetrics.duplicateDropped}`
+          );
+        }
+        return;
+      }
+
+      if (messageTimestampMs < chatState.lastProcessedMessageTimestamp) {
+        ingressMetrics.lateDropped += 1;
+        chatState.processedMessageIds.set(dedupeMessageId, receivedAtMs + ingressProcessedIdTtlMs);
+        if (debugLoggingEnabled) {
+          console.log(
+            `[WWEBJS][INGRESS] late message dropped chatId=${chatId} messageTs=${messageTimestampMs} committedTs=${chatState.lastProcessedMessageTimestamp} total=${ingressMetrics.lateDropped}`
+          );
+        }
+        return;
+      }
+
+      chatState.processedMessageIds.set(dedupeMessageId, receivedAtMs + ingressProcessedIdTtlMs);
+
+      enqueueIncomingChatMessage({
+        messageTimestampMs,
+        dedupeMessageId,
+        receivedAtMs,
+        message: {
+          from: chatId,
+          body: msg.body,
+          id: msg.id,
+          author: msg.author,
+          timestamp: msg.timestamp,
+          ingressMeta: {
+            dedupeMessageId,
+            providerMessageId: providerMessageId || null,
+            isFallbackMessageId: !providerMessageId,
+            queueDepth: chatState.queueDepth,
+            metrics: {
+              duplicateDropped: ingressMetrics.duplicateDropped,
+              lateDropped: ingressMetrics.lateDropped,
+            },
+            lastProcessedMessageTimestamp: chatState.lastProcessedMessageTimestamp,
+          },
+          ...contactMeta,
+        },
       });
     };
     client.on('message', internalMessageHandler);
@@ -1694,6 +1877,18 @@ export async function createWwebjsClient(clientId = 'wa-admin') {
 
   emitter.onMessage = (handler) => emitter.on('message', handler);
   emitter.onDisconnect = (handler) => emitter.on('disconnected', handler);
+  emitter.getIngressMetrics = () => {
+    const queueDepthByChat = {};
+    for (const [chatId, chatState] of perChatIngressState.entries()) {
+      queueDepthByChat[chatId] = chatState.queueDepth;
+    }
+    return {
+      duplicateDropped: ingressMetrics.duplicateDropped,
+      lateDropped: ingressMetrics.lateDropped,
+      queueDepthByChat,
+      trackedChats: perChatIngressState.size,
+    };
+  };
   emitter.isReady = async () => client.info !== undefined;
   emitter.getConnectPromise = () => connectInProgress;
   emitter.getConnectStartedAt = () => connectStartedAt;
