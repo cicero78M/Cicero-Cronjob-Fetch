@@ -94,10 +94,11 @@ dirrequest tanpa langkah tambahan.
   **Asia/Jakarta** secara eksplisit (menggunakan `Intl.DateTimeFormat`)
   sehingga tanggal tidak akan melenceng meski server menjalankan bot dengan
   zona waktu default yang berbeda.
-- Filter database harian untuk konten TikTok sudah menggunakan `(created_at AT
-  TIME ZONE 'Asia/Jakarta')::date` dengan parameter *reference date* opsional
-  (default ke *Jakarta now*) sehingga label periode dan filter query selalu
-  selaras, termasuk ketika server berjalan di luar WIB.
+- Filter database harian untuk konten TikTok kini diseragamkan dengan
+  handler fetch konten: `DATE((created_at AT TIME ZONE 'UTC') AT TIME ZONE
+  'Asia/Jakarta') = $tanggal_wib` dengan parameter tanggal acuan berbasis
+  `toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' })` agar hasil
+  harian tetap konsisten saat server tidak berjalan di zona WIB.
 - Standar penyimpanan `tiktok_post.created_at` kini memakai **TIMESTAMPTZ (UTC canonical)**. Konversi ke WIB hanya dilakukan saat filter/query pelaporan (`AT TIME ZONE 'Asia/Jakarta'`) agar timestamp mentah tidak lagi ambigu ketika dibaca lintas environment.
 - Alur menu dapat memasok `referenceDate` (mis. menyimpan `session.referenceDate`
   atau `session.dirRequestReferenceDate`) untuk memaksa label periode, rentang
