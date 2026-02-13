@@ -402,7 +402,7 @@ export async function runCron(options = {}) {
     const skipPostFetch = forceEngagementOnly || !isPostFetchTime;
 
     const timeBasedMessage = isPostFetchTime
-      ? "post fetch period (last run 17:03)"
+      ? "post fetch period (last run 17:15)"
       : "engagement only period (17:30-22:00)";
 
     logMessage("start", null, "cron", "start", null, null, "", {

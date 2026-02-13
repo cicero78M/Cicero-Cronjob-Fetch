@@ -507,6 +507,7 @@ berpindah ke dashboard web atau menjalankan skrip manual.
   ke saluran debug dan admin WA.
 - Target cron ini mencakup seluruh client aktif (direktorat maupun org) yang
   memiliki Instagram atau TikTok aktif, bukan hanya direktorat.
+- Pesan startup Telegram untuk fase post-fetch kini memakai label `post fetch period (last run 17:15)` agar batas run terakhir selaras dengan kebijakan lock pengiriman grup setelah 17:15 WIB.
 - Tahap logging utama yang dicetak berurutan:
   1. **start**: memuat *Client ID* target dan penerima grup WA yang valid.
   2. **timeCheck**: jika waktu Jakarta melewati **17:15 WIB**, cron tetap
