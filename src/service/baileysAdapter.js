@@ -148,24 +148,55 @@ export async function createBaileysClient(clientId = 'wa-admin') {
       logMethod(inputArgs, method, level) {
         // Intercept error-level logs to detect Bad MAC errors
         if (level >= 50) { // 50 = error level in Pino
-          const firstArg = inputArgs[0];
-          let errorText = '';
-          
-          if (typeof firstArg === 'string') {
-            errorText = firstArg;
-          } else if (firstArg && typeof firstArg === 'object') {
-            errorText = firstArg.msg || firstArg.message || firstArg.err?.message || '';
+          const stringCandidates = [];
+
+          for (const arg of inputArgs) {
+            if (!arg) continue;
+
+            if (typeof arg === 'string') {
+              stringCandidates.push(arg);
+              continue;
+            }
+
+            if (arg instanceof Error) {
+              if (arg.message) {
+                stringCandidates.push(arg.message);
+              }
+              if (arg.stack) {
+                stringCandidates.push(arg.stack);
+              }
+            }
+
+            if (typeof arg === 'object') {
+              if (arg.msg) stringCandidates.push(arg.msg);
+              if (arg.message) stringCandidates.push(arg.message);
+              if (arg.err?.message) stringCandidates.push(arg.err.message);
+
+              try {
+                stringCandidates.push(JSON.stringify(arg));
+              } catch (serializationError) {
+                stringCandidates.push(String(arg));
+              }
+            }
           }
-          
-          // Check for Bad MAC errors (case-insensitive)
-          const lowerText = errorText.toLowerCase();
-          const isBadMacError = lowerText.includes('bad mac') || lowerText.includes('failed to decrypt');
-          
-          if (isBadMacError) {
-            // Handle Bad MAC error asynchronously
-            setImmediate(() => handleBadMacError(errorText));
+
+          const normalizedCandidates = stringCandidates
+            .map((candidate) => String(candidate).trim().toLowerCase())
+            .filter(Boolean);
+          const combinedErrorText = normalizedCandidates.join(' | ');
+          const badMacPatterns = [
+            'failed to decrypt message with any known session',
+            'session error',
+            'bad mac',
+          ];
+          const matchedPattern = badMacPatterns.find((pattern) => combinedErrorText.includes(pattern));
+
+          if (matchedPattern) {
+            // Handle Bad MAC error asynchronously (single trigger per log event)
+            setImmediate(() => handleBadMacError(combinedErrorText));
+            console.warn(`[BAILEYS-LOGGER] Matched pattern "${matchedPattern}", forwarding to Bad MAC handler`);
             // Always log Bad MAC errors to console for visibility
-            console.error('[BAILEYS-LOGGER] Bad MAC error detected:', errorText);
+            console.error('[BAILEYS-LOGGER] Bad MAC error detected:', combinedErrorText);
             // Don't let Pino log it again
             return undefined;
           }

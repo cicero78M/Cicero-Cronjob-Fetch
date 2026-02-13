@@ -46,13 +46,17 @@ jest.unstable_mockModule('@whiskeysockets/baileys', () => ({
 }));
 
 // Mock Pino logger
+let mockPinoConfig;
 jest.unstable_mockModule('pino', () => ({
-  default: jest.fn(() => ({
-    debug: jest.fn(),
-    info: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-  })),
+  default: jest.fn((config) => {
+    mockPinoConfig = config;
+    return {
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    };
+  }),
 }));
 
 const { createBaileysClient } = await import('../src/service/baileysAdapter.js');
@@ -61,6 +65,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   Object.keys(mockSocketEvents).forEach(key => delete mockSocketEvents[key]);
   mockSocket.user = undefined;
+  mockPinoConfig = undefined;
   delete process.env.WA_DEBUG_LOGGING;
   delete process.env.WA_AUTH_DATA_PATH;
 });
@@ -455,4 +460,87 @@ test('baileys adapter reinitializes with cleared session on LOGGED_OUT', async (
   
   consoleLogSpy.mockRestore();
   consoleWarnSpy.mockRestore();
+});
+
+test('baileys logger handles bad mac pattern from second logger argument', async () => {
+  const client = await createBaileysClient('test-client');
+  activeClients.push(client);
+  await client.connect();
+
+  const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+  const consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation();
+
+  const loggerHook = mockPinoConfig?.hooks?.logMethod;
+  expect(loggerHook).toBeDefined();
+
+  const method = jest.fn();
+  loggerHook(
+    [{ msg: 'unrelated log' }, 'Failed to decrypt message with any known session'],
+    method,
+    50
+  );
+
+  await new Promise((resolve) => setImmediate(resolve));
+
+  expect(consoleWarnSpy).toHaveBeenCalledWith(
+    expect.stringContaining('[BAILEYS-LOGGER] Matched pattern "failed to decrypt message with any known session"')
+  );
+  expect(consoleErrorSpy).toHaveBeenCalledWith(
+    expect.stringContaining('[BAILEYS-LOGGER] Bad MAC error detected:'),
+    expect.stringContaining('failed to decrypt message with any known session')
+  );
+  expect(method).not.toHaveBeenCalled();
+
+  consoleErrorSpy.mockRestore();
+  consoleWarnSpy.mockRestore();
+});
+
+test('baileys logger handles nested err.message from third logger argument', async () => {
+  const client = await createBaileysClient('test-client');
+  activeClients.push(client);
+  await client.connect();
+
+  const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+  const loggerHook = mockPinoConfig?.hooks?.logMethod;
+  expect(loggerHook).toBeDefined();
+
+  loggerHook(
+    ['meta', { message: 'skip' }, { err: { message: 'Session Error: Bad MAC from nested err' } }],
+    jest.fn(),
+    50
+  );
+
+  await new Promise((resolve) => setImmediate(resolve));
+
+  expect(consoleErrorSpy).toHaveBeenCalledWith(
+    expect.stringContaining('[BAILEYS-LOGGER] Bad MAC error detected:'),
+    expect.stringContaining('session error: bad mac')
+  );
+
+  consoleErrorSpy.mockRestore();
+});
+
+test('baileys logger handles plain string failed to decrypt without double trigger', async () => {
+  const client = await createBaileysClient('test-client');
+  activeClients.push(client);
+  await client.connect();
+
+  const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+  const loggerHook = mockPinoConfig?.hooks?.logMethod;
+  expect(loggerHook).toBeDefined();
+
+  loggerHook(
+    ['Failed to decrypt message with any known session'],
+    jest.fn(),
+    50
+  );
+
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const badMacDetectionCalls = consoleErrorSpy.mock.calls.filter((call) =>
+    call[0]?.includes('[BAILEYS] Bad MAC error detected in decryption layer')
+  );
+  expect(badMacDetectionCalls).toHaveLength(1);
+
+  consoleErrorSpy.mockRestore();
 });
