@@ -19,6 +19,8 @@ const DEFAULT_AUTH_DATA_DIR = 'baileys_auth';
 const DEFAULT_AUTH_DATA_PARENT_DIR = '.cicero';
 const SESSION_LOCK_FILE_NAME = '.session.lock';
 const SHUTDOWN_SIGNALS = ['SIGINT', 'SIGTERM'];
+// Delay to ensure async file system operations complete before verification
+const FILE_SYSTEM_OPERATION_DELAY = 100; // milliseconds
 
 function resolveDefaultAuthDataPath() {
   const homeDir = os.homedir?.();
@@ -777,7 +779,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
               await rm(sessionPath, { recursive: true, force: true });
               
               // Add small delay to ensure async file system operations complete
-              await new Promise(resolve => setTimeout(resolve, 100));
+              await new Promise(resolve => setTimeout(resolve, FILE_SYSTEM_OPERATION_DELAY));
               
               // Verify it was removed
               if (fs.existsSync(sessionPath)) {
