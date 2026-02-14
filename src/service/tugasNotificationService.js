@@ -296,17 +296,11 @@ function formatInstaTaskSection(posts) {
     const shortcode = post.shortcode || '';
     const caption = post.caption ? truncateText(post.caption, 60) : '(Tidak ada caption)';
     const link = `https://www.instagram.com/p/${shortcode}/`;
-<<<<<<< cicero/update-task-formatter-to-include-metadata
     const uploadDate = formatJakartaDateTime(post.created_at);
     const likeText = post.like_count == null ? '-' : formatCount(post.like_count, 0);
     const commentText = formatCount(post.comment_count, 0);
-    
-=======
-    const likes = Number.isFinite(Number(post.like_count)) ? Number(post.like_count) : 0;
 
->>>>>>> main
     lines.push(`${index + 1}. ${link}`);
-    lines.push(`   ❤️ ${likes} likes`);
     lines.push(`   _${caption}_`);
     lines.push(`   Upload: ${uploadDate}`);
     lines.push(`   Likes: ${likeText} | Komentar: ${commentText}`);

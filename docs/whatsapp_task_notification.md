@@ -154,6 +154,23 @@ Format group ID WhatsApp harus:
    - Jika sukses: status `sent` + isi `sent_at`
    - Jika gagal: retry exponential backoff sampai `max_attempts`, lalu `dead_letter`
 
+
+## Troubleshooting
+
+### Error `SyntaxError: Unexpected token "<<"` saat service start
+
+Gejala ini biasanya muncul ketika file JavaScript masih menyisakan *merge conflict marker* (`<<<<<<<`, `=======`, `>>>>>>>`).
+
+Perbaikan pada modul notifikasi tugas (`src/service/tugasNotificationService.js`) sudah memastikan formatter Instagram daftar tugas terjadwal bersih dari conflict marker dan mempertahankan output metadata engagement berikut:
+- `Upload: <hari>, <tanggal> <jam:menit> WIB`
+- `Likes: <angka format id-ID atau -> | Komentar: <angka format id-ID>`
+
+Jika error serupa muncul lagi, jalankan pengecekan cepat berikut di root project:
+
+```bash
+rg -n "^<<<<<<<|^=======|^>>>>>>>" src
+```
+
 ## Logging
 
 Sistem mencatat setiap langkah enqueue dan delivery dengan format seperti:
