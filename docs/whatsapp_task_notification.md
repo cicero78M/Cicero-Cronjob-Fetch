@@ -136,7 +136,7 @@ Format group ID WhatsApp harus:
 ## Cara Kerja
 
 1. **Cron job berjalan sesuai jadwal aktual**:
-   - Post fetch + engagement refresh: `5,30 6-16 * * *` + `0 17 * * *`
+   - Post fetch + engagement refresh: `5,30 6-16 * * *` + `5 17 * * *`
    - Engagement-only: `30 17-21 * * *` + `0 18-22 * * *`
 2. **Fetch konten sosial media** untuk setiap client aktif (hanya pada jadwal post-fetch; engagement-only tidak fetch post baru)
 3. **Hitung perubahan**:
@@ -164,7 +164,7 @@ Format group ID WhatsApp harus:
 ### Ringkasan `forceScheduled` pada payload
 
 - `forceScheduled=true`
-  - Dipakai untuk notifikasi hourly/scheduled (termasuk slot wajib 17:00).
+  - Dipakai untuk notifikasi hourly/scheduled (termasuk slot wajib 17:05).
   - Pesan yang dibentuk adalah daftar tugas terjadwal (`formatScheduledTaskList`).
   - Idempotency key menyertakan `scheduled` + `hourKey` agar maksimal satu event per jam per grup untuk payload yang sama.
 - `forceScheduled=false`
@@ -177,7 +177,7 @@ Format group ID WhatsApp harus:
 2. Bila syarat terpenuhi, sistem **enqueue** event ke `wa_notification_outbox` (belum mengirim WA langsung).
 3. `cronWaOutboxWorker` (tiap menit) claim event `pending/retrying`, kirim ke WA gateway, lalu update status `sent/retrying/dead_letter`.
 4. `06:30` tetap berada di slot `...-06@05`; bila `last_notified_slot` sudah sama dan tidak ada perubahan baru, tidak enqueue scheduled ulang.
-5. `17:00` run wajib post-fetch tetap dievaluasi sebagai slot hourly; saat slot baru, `forceScheduled=true` memastikan pesan daftar tugas tetap terbuat walau tanpa perubahan data.
+5. `17:05` run wajib post-fetch tetap dievaluasi sebagai slot hourly; saat slot baru, `forceScheduled=true` memastikan pesan daftar tugas tetap terbuat walau tanpa perubahan data.
 
 ## Troubleshooting
 

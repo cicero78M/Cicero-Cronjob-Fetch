@@ -11,8 +11,8 @@ This document summarizes the high level business processes of the Cicero platfor
 
 ## 2. Social Media Data Collection
 
-1. Cron `cronDirRequestFetchSosmed` berjalan terjadwal di zona Asia/Jakarta untuk dua fase: post-fetch period (`5,30 6-16 * * *` + slot wajib `0 17 * * *`) dan engagement-only period (`30 17-21 * * *` + `0 18-22 * * *`).
-2. Pada post-fetch period, sistem mengambil post Instagram/TikTok sekaligus refresh likes/komentar (termasuk run wajib 17:00 untuk semua client aktif); pada engagement-only period sistem hanya refresh likes/komentar.
+1. Cron `cronDirRequestFetchSosmed` berjalan terjadwal di zona Asia/Jakarta untuk dua fase: post-fetch period (`5,30 6-16 * * *` + slot wajib `5 17 * * *`) dan engagement-only period (`30 17-21 * * *` + `0 18-22 * * *`).
+2. Pada post-fetch period, sistem mengambil post Instagram/TikTok sekaligus refresh likes/komentar (termasuk run wajib 17:05 untuk semua client aktif); pada engagement-only period sistem hanya refresh likes/komentar.
 3. Hasil fetch disimpan ke PostgreSQL, lalu dipakai untuk attendance dan analytics.
 
 ## 3. Dashboard Analytics
@@ -23,7 +23,7 @@ This document summarizes the high level business processes of the Cicero platfor
 
 ## 4. Notifications & Reporting
 
-1. Notifikasi tugas dikirim saat ada perubahan penting atau saat slot hourly global Jakarta aktif selama jam post-fetch (06:00-17:59 WIB, dibandingkan via `last_notified_slot` per client). Slot wajib 17:00 tetap memakai `forceScheduled` agar pesan scheduled tidak bergantung pada perubahan data.
+1. Notifikasi tugas dikirim saat ada perubahan penting atau saat slot hourly global Jakarta aktif selama jam post-fetch (06:00-17:59 WIB, dibandingkan via `last_notified_slot` per client). Slot wajib 17:05 tetap memakai `forceScheduled` agar pesan scheduled tidak bergantung pada perubahan data.
 2. Pengiriman log/error operasional tetap melalui WhatsApp admin; `telegramService` dipertahankan sebagai wrapper WA untuk backward compatibility.
 3. Admin juga dapat memicu proses manual tertentu dari command WhatsApp (dirrequest).
 

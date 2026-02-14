@@ -169,25 +169,25 @@ function buildNextSchedulerState(schedulerState, countsAfter, notificationSent, 
 
 /**
  * Determine if we should fetch posts based on current time
- * Post-fetch window includes mandatory 17:00 run, so we allow hour <= 17.
+ * Post-fetch window includes mandatory 17:05 run, so we allow hour <= 17.
  * @returns {boolean} True if it's time to fetch posts (06:00-17:59 WIB)
  */
 function shouldFetchPosts() {
   const jakartaHour = getJakartaTimeParts(new Date()).hour;
 
-  // Check if hour is between 6 and 17 (includes mandatory 17:00 post-fetch slot)
+  // Check if hour is between 6 and 17 (includes mandatory 17:05 post-fetch slot)
   return jakartaHour >= 6 && jakartaHour <= 17;
 }
 
 /**
  * Determine if we should send hourly notifications based on current time
- * Notifications align with post fetch period including mandatory 17:00 slot.
+ * Notifications align with post fetch period including mandatory 17:05 slot.
  * @returns {boolean} True if within notification time (06:00-17:59 WIB)
  */
 function shouldSendHourlyNotifications() {
   const jakartaHour = getJakartaTimeParts(new Date()).hour;
 
-  // Check if hour is between 6 and 17 (includes 17:00 scheduled notification slot)
+  // Check if hour is between 6 and 17 (includes 17:05 scheduled notification slot)
   return jakartaHour >= 6 && jakartaHour <= 17;
 }
 
@@ -263,7 +263,7 @@ export async function processClient(client, options = {}) {
   logMessage("fetchComplete", clientId, "fetchComplete", "completed", countsBefore, countsAfter,
     "Social media fetch completed successfully");
 
-  // Check if it's time for hourly notification (during post fetch period, last run 16:30)
+  // Check if it's time for hourly notification (during post fetch period, last run 17:05)
   const isNotificationTime = shouldSendHourlyNotifications();
   const shouldSendHourly = isNotificationTime && shouldSendHourlyNotification(schedulerState, currentSlotKey);
   const hasChanges = hasNotableChanges(changes);
@@ -405,7 +405,7 @@ export async function runCron(options = {}) {
     const skipPostFetch = forceEngagementOnly || !isPostFetchTime;
 
     const timeBasedMessage = isPostFetchTime
-      ? "post fetch period (mandatory run at 17:00)"
+      ? "post fetch period (mandatory run at 17:05)"
       : "engagement only period (17:30-22:00)";
 
     logMessage("start", null, "cron", "start", null, null, "", {
@@ -527,9 +527,10 @@ export async function runCron(options = {}) {
 export const JOB_KEY = "./src/cron/cronDirRequestFetchSosmed.js";
 
 // Posts fetch: Run every 30 minutes from 06:05 to 16:30 Jakarta time.
-// Mandatory extra run at 17:00 to ensure required post fetch + scheduled task message.
+// Mandatory extra run at 17:05 so it aligns with hourly slot anchor (@05)
+// and guarantees the 17:00-17:59 hourly scheduled message is emitted.
 const POST_FETCH_SCHEDULE = "5,30 6-16 * * *";
-const MANDATORY_17_FETCH_SCHEDULE = "0 17 * * *";
+const MANDATORY_17_FETCH_SCHEDULE = "5 17 * * *";
 
 // Engagement only: Run every 30 minutes from 5:30 PM to 10 PM Jakarta time
 // First execution at 17:30 (5:30 PM), after post fetch period ends
@@ -544,7 +545,7 @@ const CRON_OPTIONS = { timezone: "Asia/Jakarta" };
 // Schedule post fetch job (every 30 min from 06:05 to 16:30)
 scheduleCronJob(JOB_KEY + ":post-fetch", POST_FETCH_SCHEDULE, runCron, CRON_OPTIONS);
 
-// Mandatory post-fetch run at 17:00 WIB (not engagement-only)
+// Mandatory post-fetch run at 17:05 WIB (not engagement-only)
 scheduleCronJob(JOB_KEY + ":post-fetch-17", MANDATORY_17_FETCH_SCHEDULE, runCron, CRON_OPTIONS);
 
 // Schedule engagement only jobs (17:30 to 22:00)
