@@ -71,6 +71,10 @@ if (isBurstError) {
 - Prevents recovery thrashing
 - Allows time for session to stabilize
 - Reduces server load and API calls
+- Cooldown logs are rate-limited to 1 log / 5 seconds per `source` (logger/message/connection)
+- Duplicate cooldown logs are counted and emitted periodically as summaries so operators still see volume
+- Forced recovery emits one explicit summary (error count, cooldown elapsed/remaining, trigger source)
+- Recovery may be intentionally delayed during cooldown unless forced threshold is reached
 
 **Implementation:**
 ```javascript
@@ -78,11 +82,14 @@ const RECOVERY_COOLDOWN = 30000; // 30 seconds between recovery attempts
 let lastRecoveryAttemptTime = 0;
 
 if (timeSinceLastRecovery < RECOVERY_COOLDOWN) {
-  console.warn(
-    `[BAILEYS] Bad MAC error detected but in recovery cooldown (${Math.round((RECOVERY_COOLDOWN - timeSinceLastRecovery)/1000)}s remaining), skipping recovery`
-  );
+  // per-source limiter: only one cooldown detail log every 5s
+  // duplicates are tracked and emitted as:
+  // "Suppressed N duplicate Bad MAC cooldown logs in last 5s"
   return;
 }
+
+// forced threshold reached during cooldown => emit one full summary
+// "Forced recovery summary: <count> errors during cooldown (elapsed=<x>s, remaining=<y>s, triggerSource=<source>)"
 ```
 
 **Benefits:**
