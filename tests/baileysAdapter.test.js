@@ -317,7 +317,7 @@ test('baileys adapter handles Bad MAC errors', async () => {
   
   // First MAC error should be logged but not trigger reinit (threshold is 2)
   expect(consoleErrorSpy).toHaveBeenCalledWith(
-    expect.stringContaining('[BAILEYS] Bad MAC error in connection handler (1/2)'),
+    expect.stringContaining('[BAILEYS] Bad MAC error detected in connection (1/2)'),
     expect.stringContaining('Bad MAC')
   );
   
@@ -339,7 +339,7 @@ test('baileys adapter handles Bad MAC errors', async () => {
   
   // Second MAC error should trigger recovery
   expect(consoleErrorSpy).toHaveBeenCalledWith(
-    expect.stringContaining('[BAILEYS] Bad MAC error in connection handler (2/2)'),
+    expect.stringContaining('[BAILEYS] Bad MAC error detected in connection (2/2)'),
     expect.stringContaining('Bad MAC')
   );
   expect(consoleWarnSpy).toHaveBeenCalledWith(
@@ -374,7 +374,7 @@ test('baileys adapter resets MAC error counter on successful connection', async 
   }
   
   expect(consoleErrorSpy).toHaveBeenCalledWith(
-    expect.stringContaining('[BAILEYS] Bad MAC error in connection handler (1/2)'),
+    expect.stringContaining('[BAILEYS] Bad MAC error detected in connection (1/2)'),
     expect.anything()
   );
   
@@ -402,7 +402,7 @@ test('baileys adapter resets MAC error counter on successful connection', async 
   
   // Counter should have reset, so this should be (1/2) not (2/2)
   const errorCalls = consoleErrorSpy.mock.calls.filter(
-    call => call[0] && call[0].includes('[BAILEYS] Bad MAC error in connection handler')
+    call => call[0] && call[0].includes('[BAILEYS] Bad MAC error detected in connection')
   );
   
   // Should have two calls: first at (1/2), second at (1/2) after reset
@@ -546,6 +546,48 @@ test('baileys logger handles plain string failed to decrypt without double trigg
     call[0]?.includes('[BAILEYS] Bad MAC error detected in logger')
   );
   expect(badMacDetectionCalls).toHaveLength(1);
+
+  consoleErrorSpy.mockRestore();
+});
+
+
+
+test('baileys adapter deduplicates repeated Bad MAC signals across logger and connection paths', async () => {
+  const client = await createBaileysClient('test-client');
+  activeClients.push(client);
+  await client.connect();
+
+  const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+  const loggerHook = mockPinoConfig?.hooks?.logMethod;
+  expect(loggerHook).toBeDefined();
+
+  loggerHook(
+    ['Failed to decrypt message with any known session'],
+    jest.fn(),
+    50
+  );
+
+  await new Promise((resolve) => setImmediate(resolve));
+
+  if (mockSocketEvents['connection.update']) {
+    mockSocketEvents['connection.update'].forEach((handler) =>
+      handler({
+        connection: 'close',
+        lastDisconnect: {
+          error: {
+            message: 'Failed to decrypt message with any known session',
+            stack: 'Error: Bad MAC\n at SessionCipher',
+            output: { statusCode: 428 }
+          }
+        }
+      })
+    );
+  }
+
+  const detectionCalls = consoleErrorSpy.mock.calls.filter(
+    (call) => call[0] && call[0].includes('[BAILEYS] Bad MAC error detected in')
+  );
+  expect(detectionCalls).toHaveLength(1);
 
   consoleErrorSpy.mockRestore();
 });
