@@ -35,6 +35,7 @@ The following environment variables are no longer used:
 ### New Environment Variables
 
 - `WA_DEBUG_LOGGING` - Enable debug logging (default: false)
+- `WA_BAILEYS_STRICT_SINGLE_OWNER` - Exit process immediately on `WA_BAILEYS_SHARED_SESSION_LOCK` conflict (default: false)
 
 ### Authentication Storage
 
@@ -65,9 +66,18 @@ The lock stores minimal metadata:
 Behavior summary:
 
 1. Before `connect`, adapter checks and acquires `.session.lock`.
-2. If lock belongs to a live process, adapter throws a clear error and stops initialization.
+2. If lock belongs to a live process, adapter emits fatal log `WA_BAILEYS_SHARED_SESSION_LOCK` with lock owner + session path and stops initialization.
 3. If lock PID is stale (process no longer alive), lock is cleaned up automatically.
 4. Lock is released on `disconnect`, on reinitialize with session clear, and during `SIGINT`/`SIGTERM` shutdown handling.
+
+### PM2 Single-Owner Checklist (Wajib)
+
+Saat deploy dengan PM2, pastikan checklist ini terpenuhi:
+
+- [ ] Jangan jalankan lebih dari satu process untuk `clientId` yang sama.
+- [ ] Jangan share auth path antar service tanpa ownership yang jelas.
+- [ ] Untuk mode fail-fast, set `WA_BAILEYS_STRICT_SINGLE_OWNER=true` agar proses langsung exit saat lock conflict.
+
 
 ## API Compatibility
 
