@@ -1,5 +1,5 @@
 # Source of Truth: Jadwal Cron & Flow Notifikasi Sosmed
-*Last updated: 2026-02-13*
+*Last updated: 2026-02-14*
 
 Dokumen ini adalah referensi utama untuk jadwal cron dan alur notifikasi pada modul fetch sosmed.
 Jika ada perbedaan dengan dokumen lain, **ikuti dokumen ini + implementasi di `src/cron/cronDirRequestFetchSosmed.js`**.
@@ -8,11 +8,12 @@ Jika ada perbedaan dengan dokumen lain, **ikuti dokumen ini + implementasi di `s
 
 Sumber implementasi:
 - `POST_FETCH_SCHEDULE = "5,30 6-16 * * *"`
+- `MANDATORY_17_FETCH_SCHEDULE = "0 17 * * *"`
 - `ENGAGEMENT_ONLY_SCHEDULES = ["30 17-21 * * *", "0 18-22 * * *"]`
 
 ### A. Post Fetch + Engagement Refresh
-- Cron: `5,30 6-16 * * *`
-- Jam jalan: **06:05, 06:30, 07:05, 07:30, ... , 16:05, 16:30**
+- Cron gabungan: `5,30 6-16 * * *` + `0 17 * * *`
+- Jam jalan: **06:05, 06:30, 07:05, 07:30, ... , 16:05, 16:30, 17:00**
 - Aksi:
   - Fetch post Instagram
   - Fetch post TikTok
@@ -32,7 +33,7 @@ Sumber implementasi:
 ### Trigger notifikasi
 Notifikasi tugas dikirim jika salah satu kondisi benar:
 1. Ada perubahan signifikan (`hasNotableChanges(changes)`), atau
-2. Slot hourly aktif berdasarkan state (`shouldSendHourlyNotification`) selama jam post-fetch (06:00–16:59 WIB).
+2. Slot hourly aktif berdasarkan state (`shouldSendHourlyNotification`) selama jam post-fetch (06:00–17:59 WIB, termasuk run wajib 17:00).
 
 ### Behavior stateful
 - Hourly slot: berbasis **slot global Jakarta** dengan key format `YYYY-MM-DD-HH@05`.
@@ -47,7 +48,7 @@ Notifikasi tugas dikirim jika salah satu kondisi benar:
 - Jika storage state gagal, sistem masuk mode konservatif: notifikasi hanya dikirim saat ada perubahan.
 
 ### Bentuk pesan
-- `forceScheduled=true`: kirim ringkasan tugas terjadwal (tetap kirim walau tidak ada perubahan).
+- `forceScheduled=true`: kirim ringkasan tugas terjadwal (tetap kirim walau tidak ada perubahan), termasuk slot wajib 17:00 untuk semua client aktif.
 - `forceScheduled=false`: kirim saat ada perubahan.
 
 ## 3) Catatan Penting Kompatibilitas

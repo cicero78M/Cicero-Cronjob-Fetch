@@ -67,8 +67,10 @@ dirrequest tanpa langkah tambahan.
   timestamp eksekusi fetch yang eksplisit.
 - Setelah periode post-fetch berakhir, cron fetch sosmed hanya menjalankan refresh
   likes Instagram dan komentar TikTok tanpa menarik postingan baru. Jadwal
-  aktualnya adalah `30 17-21 * * *` dan `0 18-22 * * *` (17:30 s.d. 22:00 WIB).
-  Pengambilan konten baru hanya aktif pada cron `5,30 6-16 * * *`.
+  engagement-only aktualnya adalah `30 17-21 * * *` dan `0 18-22 * * *`
+  (17:30 s.d. 22:00 WIB).
+  Pengambilan konten baru aktif pada cron `5,30 6-16 * * *` dan slot wajib
+  `0 17 * * *` (17:00 WIB) untuk semua client aktif.
 
 ## Absensi Likes Instagram (Format Dirrequest)
 - Rekap absensi likes Instagram (menu dirrequest untuk Direktorat) kini

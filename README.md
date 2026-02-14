@@ -14,14 +14,14 @@ This service runs scheduled cron jobs to:
 ## Features
 
 - **Automated Fetching**: 
-  - Post fetch + engagement refresh mengikuti cron `5,30 6-16 * * *` (06:05, 06:30, ... , 16:05, 16:30 WIB)
+  - Post fetch + engagement refresh mengikuti cron `5,30 6-16 * * *` + slot wajib `0 17 * * *` (06:05, 06:30, ... , 16:05, 16:30, 17:00 WIB)
   - Engagement-only (likes & comments) mengikuti cron `30 17-21 * * *` dan `0 18-22 * * *` (17:30 s.d. 22:00 WIB)
 - **Multi-Platform Support**: Instagram and TikTok
 - **Engagement Tracking**: Posts, likes, and comments
 - **Database Storage**: All data stored in PostgreSQL
 - **Client Management**: Supports multiple social media accounts
 - **Error Handling**: Robust error logging and recovery
-- **WhatsApp Notifications**: Hourly task notifications from 6 AM to 4:30 PM via WA Gateway
+- **WhatsApp Notifications**: Hourly task notifications from 06:00-17:59 WIB (termasuk slot wajib 17:00) via WA Gateway
 - **WhatsApp Logging**: System logs and errors sent to admin WhatsApp numbers
 
 ## Requirements
@@ -91,11 +91,12 @@ npm run dev
 
 The fetch job runs on the following schedule (Asia/Jakarta timezone):
 
-### Post Fetch + Engagement Refresh (06:05 - 16:30)
-- Cron: `5,30 6-16 * * *`
-- Runs at: 06:05, 06:30, 07:05, 07:30, ..., 16:05, 16:30
+### Post Fetch + Engagement Refresh (06:05 - 17:00, termasuk slot wajib)
+- Cron gabungan: `5,30 6-16 * * *` + `0 17 * * *`
+- Runs at: 06:05, 06:30, 07:05, 07:30, ..., 16:05, 16:30, 17:00
 - Fetches Instagram posts, TikTok posts, Instagram likes, and TikTok comments
-- Sends task notifications when there are notable changes, plus hourly scheduled notifications during post-fetch period
+- Slot 17:00 adalah fetch + pesan tugas scheduled wajib untuk semua client aktif
+- Sends task notifications when there are notable changes, plus hourly scheduled notifications during post-fetch period (hingga 17:59 WIB)
 
 ### Engagement Only (17:30 - 22:00)
 - Cron gabungan: `30 17-21 * * *` + `0 18-22 * * *`

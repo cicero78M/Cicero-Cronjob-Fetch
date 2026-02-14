@@ -169,26 +169,26 @@ function buildNextSchedulerState(schedulerState, countsAfter, notificationSent, 
 
 /**
  * Determine if we should fetch posts based on current time
- * Cron runs until 16:30, so we check if hour < 17 to allow the 16:30 job to execute
- * @returns {boolean} True if it's time to fetch posts (06:00-16:59 allows 16:30 job)
+ * Post-fetch window includes mandatory 17:00 run, so we allow hour <= 17.
+ * @returns {boolean} True if it's time to fetch posts (06:00-17:59 WIB)
  */
 function shouldFetchPosts() {
   const jakartaHour = getJakartaTimeParts(new Date()).hour;
 
-  // Check if hour is between 6 and 16 (allows jobs scheduled at 06:00, 06:30, ..., 16:30)
-  return jakartaHour >= 6 && jakartaHour < 17;
+  // Check if hour is between 6 and 17 (includes mandatory 17:00 post-fetch slot)
+  return jakartaHour >= 6 && jakartaHour <= 17;
 }
 
 /**
  * Determine if we should send hourly notifications based on current time
- * Notifications align with post fetch period (cron runs until 16:30)
- * @returns {boolean} True if within notification time (06:00-16:59 allows 16:30 notifications)
+ * Notifications align with post fetch period including mandatory 17:00 slot.
+ * @returns {boolean} True if within notification time (06:00-17:59 WIB)
  */
 function shouldSendHourlyNotifications() {
   const jakartaHour = getJakartaTimeParts(new Date()).hour;
 
-  // Check if hour is between 6 and 16 (allows notifications during post fetch period)
-  return jakartaHour >= 6 && jakartaHour < 17;
+  // Check if hour is between 6 and 17 (includes 17:00 scheduled notification slot)
+  return jakartaHour >= 6 && jakartaHour <= 17;
 }
 
 export async function processClient(client, options = {}) {
@@ -402,7 +402,7 @@ export async function runCron(options = {}) {
     const skipPostFetch = forceEngagementOnly || !isPostFetchTime;
 
     const timeBasedMessage = isPostFetchTime
-      ? "post fetch period (last run 17:15)"
+      ? "post fetch period (mandatory run at 17:00)"
       : "engagement only period (17:30-22:00)";
 
     logMessage("start", null, "cron", "start", null, null, "", {
@@ -516,10 +516,10 @@ export async function runCron(options = {}) {
 
 export const JOB_KEY = "./src/cron/cronDirRequestFetchSosmed.js";
 
-// Posts fetch: Run every 30 minutes from 6 AM until 5 PM Jakarta time
-// Last execution at 16:30 (4:30 PM), ensuring no overlap with engagement-only period
-// This includes: 6:00, 6:30, 7:00, 7:30, ..., 16:00, 16:30
+// Posts fetch: Run every 30 minutes from 06:05 to 16:30 Jakarta time.
+// Mandatory extra run at 17:00 to ensure required post fetch + scheduled task message.
 const POST_FETCH_SCHEDULE = "5,30 6-16 * * *";
+const MANDATORY_17_FETCH_SCHEDULE = "0 17 * * *";
 
 // Engagement only: Run every 30 minutes from 5:30 PM to 10 PM Jakarta time
 // First execution at 17:30 (5:30 PM), after post fetch period ends
@@ -531,8 +531,11 @@ const ENGAGEMENT_ONLY_SCHEDULES = [
 
 const CRON_OPTIONS = { timezone: "Asia/Jakarta" };
 
-// Schedule post fetch job (every 30 min from 06:00 to 16:30)
+// Schedule post fetch job (every 30 min from 06:05 to 16:30)
 scheduleCronJob(JOB_KEY + ":post-fetch", POST_FETCH_SCHEDULE, runCron, CRON_OPTIONS);
+
+// Mandatory post-fetch run at 17:00 WIB (not engagement-only)
+scheduleCronJob(JOB_KEY + ":post-fetch-17", MANDATORY_17_FETCH_SCHEDULE, runCron, CRON_OPTIONS);
 
 // Schedule engagement only jobs (17:30 to 22:00)
 ENGAGEMENT_ONLY_SCHEDULES.forEach((schedule, index) => {
