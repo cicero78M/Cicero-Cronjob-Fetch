@@ -17,18 +17,18 @@ Dokumen ini menyelaraskan behavior notifikasi dengan implementasi aktual di `src
 ### 1) Post Fetch + Engagement Refresh
 - Cron gabungan: `5,30 6-16 * * *` + `5 17 * * *`
 - Jam jalan: 06:05, 06:30, 07:05, 07:30, ... , 16:05, 16:30, 17:05 WIB
-- Menjalankan:
-  - fetch post Instagram
-  - fetch post TikTok
-  - refresh likes Instagram
-  - refresh komentar TikTok
+- Menjalankan (bergantung status akun client):
+  - fetch post Instagram (hanya jika `client_insta_status !== false`)
+  - fetch post TikTok (hanya jika `client_tiktok_status !== false`)
+  - refresh likes Instagram (hanya jika `client_insta_status !== false`)
+  - refresh komentar TikTok (hanya jika `client_tiktok_status !== false`)
 
 ### 2) Engagement-Only
 - Cron: `30 17-21 * * *` dan `0 18-22 * * *`
 - Jam jalan: 17:30, 18:00, 18:30, ... , 21:30, 22:00 WIB
-- Menjalankan:
-  - refresh likes Instagram
-  - refresh komentar TikTok
+- Menjalankan (bergantung status akun client):
+  - refresh likes Instagram (hanya jika `client_insta_status !== false`)
+  - refresh komentar TikTok (hanya jika `client_tiktok_status !== false`)
 - Tidak ada fetch post baru.
 
 ## Logika Pengiriman Notifikasi

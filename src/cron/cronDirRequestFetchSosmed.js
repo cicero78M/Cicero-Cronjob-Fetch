@@ -240,9 +240,14 @@ export async function processClient(client, options = {}) {
   }
 
   // Fetch TikTok comments
-  logMessage("commentRefresh", clientId, "refreshComments", "start", null, null);
-  await handleFetchKomentarTiktokBatch(null, null, clientId);
-  logMessage("commentRefresh", clientId, "refreshComments", "completed", null, null);
+  if (hasTiktok) {
+    logMessage("commentRefresh", clientId, "refreshComments", "start", null, null);
+    await handleFetchKomentarTiktokBatch(null, null, clientId);
+    logMessage("commentRefresh", clientId, "refreshComments", "completed", null, null);
+  } else {
+    logMessage("commentRefresh", clientId, "refreshComments", "skipped", null, null,
+      "TikTok account inactive");
+  }
 
   // Get updated counts after successful fetch+refresh
   const [igCount, tiktokCount] = await Promise.all([
