@@ -106,12 +106,16 @@ export async function markOutboxDeadLetter(outboxId, errorMessage) {
   );
 }
 
-export async function releaseProcessingOutbox() {
+export async function releaseProcessingOutbox(staleSeconds = 300) {
+  const safeStaleSeconds = Math.max(1, Number(staleSeconds) || 300);
+
   const res = await query(
     `UPDATE wa_notification_outbox
      SET status = 'retrying',
          updated_at = NOW()
-     WHERE status = 'processing'`
+     WHERE status = 'processing'
+       AND COALESCE(last_attempt_at, updated_at, created_at) < NOW() - ($1::int * INTERVAL '1 second')`,
+    [safeStaleSeconds]
   );
 
   return res.rowCount || 0;

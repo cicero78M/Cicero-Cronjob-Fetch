@@ -14,6 +14,7 @@ const {
   markOutboxSent,
   markOutboxRetry,
   markOutboxDeadLetter,
+  releaseProcessingOutbox,
 } = await import('../src/model/waNotificationOutboxModel.js');
 
 describe('waNotificationOutboxModel', () => {
@@ -42,6 +43,21 @@ describe('waNotificationOutboxModel', () => {
     expect(rows).toEqual([{ outbox_id: 10 }]);
     expect(txQuery).toHaveBeenCalledTimes(1);
     expect(txQuery.mock.calls[0][1]).toEqual([['pending', 'retrying'], 5]);
+  });
+
+
+  test('releaseProcessingOutbox only releases stale processing rows', async () => {
+    mockQuery.mockResolvedValue({ rowCount: 2 });
+
+    const releasedCount = await releaseProcessingOutbox(600);
+
+    expect(releasedCount).toBe(2);
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toContain("WHERE status = 'processing'");
+    expect(sql).toContain('COALESCE(last_attempt_at, updated_at, created_at)');
+    expect(params).toEqual([600]);
   });
 
   test('mark helpers update delivery status columns', async () => {

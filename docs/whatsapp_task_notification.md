@@ -149,6 +149,8 @@ Format group ID WhatsApp harus:
    - Deduplikasi otomatis saat insert (`ON CONFLICT idempotency_key DO NOTHING`)
 5. **Worker kirim WhatsApp**:
    - Worker aktif hanya bila `app.js` memuat `src/cron/cronWaOutboxWorker.js` saat boot
+   - Sebelum claim batch, worker hanya me-release row `processing` yang stale ke `retrying` menggunakan cutoff `COALESCE(last_attempt_at, updated_at, created_at) < NOW() - interval`.
+   - Nilai stale timeout dapat diatur melalui env `WA_OUTBOX_PROCESSING_STALE_SECONDS` (default `300` detik).
    - Cron worker cepat membaca outbox status `pending`/`retrying`
    - Saat diproses, status diubah ke `processing` dan `attempt_count` bertambah
    - Jika sukses: status `sent` + isi `sent_at`
@@ -313,3 +315,5 @@ Tabel `wa_notification_outbox` menyimpan antrian notifikasi dengan kolom penting
 - `error_message`: error terakhir saat gagal kirim
 
 Backoff retry memakai exponential policy berbasis `attempt_count` dan dibatasi maksimum 1 jam antar percobaan.
+
+Catatan recovery stale processing: worker akan menulis log threshold `stale_threshold_seconds=<nilai>` saat ada row stale yang direlease kembali ke `retrying`, sehingga tuning env lebih mudah diaudit.
