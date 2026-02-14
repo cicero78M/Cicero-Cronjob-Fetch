@@ -9,6 +9,17 @@ import { createHash } from 'crypto';
 
 const LOG_TAG = 'TUGAS_NOTIFICATION';
 
+const jakartaHumanDateTimeFormatter = new Intl.DateTimeFormat('id-ID', {
+  timeZone: 'Asia/Jakarta',
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+
 /**
  * Truncate text with ellipsis if it exceeds max length
  * @param {string} text - Text to truncate
@@ -18,6 +29,21 @@ const LOG_TAG = 'TUGAS_NOTIFICATION';
 function truncateText(text, maxLength) {
   if (!text) return '';
   return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+}
+
+/**
+ * Format date into human-readable Jakarta timestamp.
+ * Example output: Senin, 17 Februari 2026 08:30 WIB
+ * @param {Date} date - Date object to format
+ * @returns {string} Jakarta-localized human-readable timestamp
+ */
+function formatJakartaHumanTimestamp(date = new Date()) {
+  const localizedDateTime = jakartaHumanDateTimeFormatter
+    .format(date)
+    .replace(' pukul ', ' ')
+    .replace('.', ':');
+
+  return `${localizedDateTime} WIB`;
 }
 
 /**
@@ -288,6 +314,8 @@ function formatTiktokTaskSection(posts) {
  * @returns {Promise<string>} Formatted message
  */
 async function formatScheduledTaskList(clientName, changes = null, clientId = null) {
+  const generatedAt = formatJakartaHumanTimestamp();
+
   // Fetch actual posts first to get accurate counts
   let instaPosts = [];
   let tiktokPosts = [];
@@ -303,6 +331,7 @@ async function formatScheduledTaskList(clientName, changes = null, clientId = nu
   
   const lines = [
     `📋 *Daftar Tugas - ${clientName}*`,
+    `🕒 Pengambilan data: ${generatedAt}`,
     '',
     `Status tugas saat ini:`,
     `📸 Instagram: *${actualIgCount}* konten`,
