@@ -536,8 +536,11 @@ berpindah ke dashboard web atau menjalankan skrip manual.
   langsung berhenti dengan log metric `lock_skipped`.
 - Setelah lock berhasil diambil, cron tetap memakai penjaga proses lokal
   (`isFetchInFlight`) untuk mencegah overlap di proses Node.js yang sama.
-- Pada blok `finally`, lock Redis selalu dilepas dan cron mencatat metrik
-  `run_duration` agar durasi total eksekusi tetap terpantau.
+  Jalur skip karena `isFetchInFlight=true` sekarang dieksekusi di dalam blok
+  `try/finally`, sehingga lock Redis tetap aman dilepas sebelum function keluar.
+- Pada blok `finally`, lock Redis selalu dilepas, menulis log
+  `action=lock_released result=released`, lalu metrik `run_duration` dicatat
+  agar durasi total eksekusi tetap terpantau.
 - Contoh log WhatsApp/debug:
   - **Sukses kirim** ke grup: `cronDirRequestFetchSosmed | clientId=DITBINMAS`
     `action=fetch_dirrequest result=sent countsBefore=ig:12/tk:9`

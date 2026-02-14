@@ -389,14 +389,17 @@ export async function runCron(options = {}) {
     lockKey: DISTRIBUTED_LOCK_KEY,
   });
 
-  if (isFetchInFlight) {
-    logMessage("lock", null, "inFlight", "queued", null, null, "Run already in progress, skipping.");
-    return;
-  }
-
-  isFetchInFlight = true;
+  let lockHeldByCurrentRun = false;
 
   try {
+    if (isFetchInFlight) {
+      logMessage("lock", null, "inFlight", "queued", null, null, "Run already in progress, skipping.");
+      return;
+    }
+
+    isFetchInFlight = true;
+    lockHeldByCurrentRun = true;
+
     // Determine if we should fetch posts based on time
     const isPostFetchTime = shouldFetchPosts();
     const skipPostFetch = forceEngagementOnly || !isPostFetchTime;
@@ -510,7 +513,14 @@ export async function runCron(options = {}) {
       durationMs: runDurationMs,
     });
     await distributedLock.release();
-    isFetchInFlight = false;
+    logMessage("lock", null, "lock_released", "released", null, null, "Distributed lock released", {
+      metric: "lock_released",
+      lockKey: DISTRIBUTED_LOCK_KEY,
+    });
+
+    if (lockHeldByCurrentRun) {
+      isFetchInFlight = false;
+    }
   }
 }
 

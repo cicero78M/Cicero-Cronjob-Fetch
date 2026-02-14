@@ -279,6 +279,7 @@ State sekarang dipersistenkan ke tabel PostgreSQL `wa_notification_scheduler_sta
   - `skipped_due_to_deadline`
   - `client_duration` per client
 - Jika durasi aktual sering mendekati `maxRunDurationMs` (>= 80%), sistem menulis warning baseline agar interval cron bisa dievaluasi (mis. dinaikkan dari 30 menit, atau workload per run dikurangi).
+- Guard lokal `isFetchInFlight` berada di dalam blok `try/finally` setelah lock terdistribusi berhasil diambil. Artinya, ketika run kedua skip karena run pertama masih berjalan, lock run kedua tetap di-`release()` dan log `action=lock_released result=released` tetap muncul untuk audit.
 
 ### Tuning yang disarankan
 
