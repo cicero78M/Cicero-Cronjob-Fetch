@@ -8,6 +8,17 @@ import { enqueueOutboxEvents } from '../model/waNotificationOutboxModel.js';
 import { createHash } from 'crypto';
 
 const LOG_TAG = 'TUGAS_NOTIFICATION';
+const jakartaDateTimeFormatter = new Intl.DateTimeFormat('id-ID', {
+  timeZone: 'Asia/Jakarta',
+  weekday: 'long',
+  day: '2-digit',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+const indonesianNumberFormatter = new Intl.NumberFormat('id-ID');
 
 /**
  * Truncate text with ellipsis if it exceeds max length
@@ -18,6 +29,36 @@ const LOG_TAG = 'TUGAS_NOTIFICATION';
 function truncateText(text, maxLength) {
   if (!text) return '';
   return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+}
+
+/**
+ * Format number using Indonesian locale
+ * @param {number|string} value - Numeric value
+ * @param {number|string} fallback - Fallback value when not a valid number
+ * @returns {string} Formatted number text
+ */
+function formatCount(value, fallback = 0) {
+  const numericValue = Number(value);
+
+  if (!Number.isFinite(numericValue)) {
+    return `${fallback}`;
+  }
+
+  return indonesianNumberFormatter.format(numericValue);
+}
+
+/**
+ * Format date time into Jakarta timezone display with WIB suffix
+ * @param {string|Date} value - Date value
+ * @returns {string} Formatted date time
+ */
+function formatJakartaDateTime(value) {
+  if (!value) return '-';
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+
+  return `${jakartaDateTimeFormatter.format(date)} WIB`;
 }
 
 /**
@@ -244,9 +285,14 @@ function formatInstaTaskSection(posts) {
     const shortcode = post.shortcode || '';
     const caption = post.caption ? truncateText(post.caption, 60) : '(Tidak ada caption)';
     const link = `https://www.instagram.com/p/${shortcode}/`;
+    const uploadDate = formatJakartaDateTime(post.created_at);
+    const likeText = post.like_count == null ? '-' : formatCount(post.like_count, 0);
+    const commentText = formatCount(post.comment_count, 0);
     
     lines.push(`${index + 1}. ${link}`);
     lines.push(`   _${caption}_`);
+    lines.push(`   Upload: ${uploadDate}`);
+    lines.push(`   Likes: ${likeText} | Komentar: ${commentText}`);
   });
 
   lines.push('');
@@ -271,9 +317,14 @@ function formatTiktokTaskSection(posts) {
     const description = post.caption ? truncateText(post.caption, 60) : '(Tidak ada deskripsi)';
     const username = post.author_username || 'user';
     const link = `https://www.tiktok.com/@${username}/video/${videoId}`;
+    const uploadDate = formatJakartaDateTime(post.created_at);
+    const likeText = formatCount(post.like_count, 0);
+    const commentText = formatCount(post.comment_count, 0);
     
     lines.push(`${index + 1}. ${link}`);
     lines.push(`   _${description}_`);
+    lines.push(`   Upload: ${uploadDate}`);
+    lines.push(`   Likes: ${likeText} | Komentar: ${commentText}`);
   });
 
   lines.push('');
