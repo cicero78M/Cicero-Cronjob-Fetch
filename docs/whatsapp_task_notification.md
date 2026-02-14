@@ -57,6 +57,18 @@ Terdapat *2* perubahan link amplifikasi:
 _Link amplifikasi telah diperbarui._
 ```
 
+**Contoh header daftar tugas terjadwal (WIB):**
+```
+📋 *Daftar Tugas - POLDA JATIM*
+🕒 Pengambilan data: Senin, 17 Februari 2026 08:30 WIB
+
+Status tugas saat ini:
+📸 Instagram: *10* konten
+🎵 TikTok: *5* konten
+```
+
+Timestamp pada daftar tugas selalu diformat dengan locale Indonesia (`id-ID`) dan timezone `Asia/Jakarta` agar konsisten di semua jalur notifikasi yang memakai format daftar tugas.
+
 ### 3. Konfigurasi Grup WhatsApp
 
 Grup penerima notifikasi dikonfigurasi melalui field `client_group` pada tabel `clients`:

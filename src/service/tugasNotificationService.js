@@ -20,6 +20,17 @@ const jakartaDateTimeFormatter = new Intl.DateTimeFormat('id-ID', {
 });
 const indonesianNumberFormatter = new Intl.NumberFormat('id-ID');
 
+const jakartaHumanDateTimeFormatter = new Intl.DateTimeFormat('id-ID', {
+  timeZone: 'Asia/Jakarta',
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+
 /**
  * Truncate text with ellipsis if it exceeds max length
  * @param {string} text - Text to truncate
@@ -285,11 +296,17 @@ function formatInstaTaskSection(posts) {
     const shortcode = post.shortcode || '';
     const caption = post.caption ? truncateText(post.caption, 60) : '(Tidak ada caption)';
     const link = `https://www.instagram.com/p/${shortcode}/`;
+<<<<<<< cicero/update-task-formatter-to-include-metadata
     const uploadDate = formatJakartaDateTime(post.created_at);
     const likeText = post.like_count == null ? '-' : formatCount(post.like_count, 0);
     const commentText = formatCount(post.comment_count, 0);
     
+=======
+    const likes = Number.isFinite(Number(post.like_count)) ? Number(post.like_count) : 0;
+
+>>>>>>> main
     lines.push(`${index + 1}. ${link}`);
+    lines.push(`   ❤️ ${likes} likes`);
     lines.push(`   _${caption}_`);
     lines.push(`   Upload: ${uploadDate}`);
     lines.push(`   Likes: ${likeText} | Komentar: ${commentText}`);
@@ -339,6 +356,8 @@ function formatTiktokTaskSection(posts) {
  * @returns {Promise<string>} Formatted message
  */
 async function formatScheduledTaskList(clientName, changes = null, clientId = null) {
+  const generatedAt = formatJakartaHumanTimestamp();
+
   // Fetch actual posts first to get accurate counts
   let instaPosts = [];
   let tiktokPosts = [];
@@ -354,6 +373,7 @@ async function formatScheduledTaskList(clientName, changes = null, clientId = nu
   
   const lines = [
     `📋 *Daftar Tugas - ${clientName}*`,
+    `🕒 Pengambilan data: ${generatedAt}`,
     '',
     `Status tugas saat ini:`,
     `📸 Instagram: *${actualIgCount}* konten`,

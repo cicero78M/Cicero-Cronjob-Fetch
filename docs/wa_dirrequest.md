@@ -589,6 +589,10 @@ berpindah ke dashboard web atau menjalankan skrip manual.
 - Jika akun Direktorat belum memiliki relasi `insta_post_roles`, cron akan
   otomatis membaca konten berdasarkan `client_id` agar daftar tugas tidak
   kosong (misalnya pada client BID HUMAS).
+- Daftar tugas Instagram pada notifikasi cron kini menampilkan angka likes per
+  konten dari snapshot tabel `insta_like.likes` (`jsonb_array_length`) karena
+  skema `insta_post` tidak memiliki kolom `like_count`. Strategi ini dipilih
+  agar sumber likes konsisten dengan hasil refresh engagement harian.
 - Cron peringkat, rekap, serta kirim ulang tugas (Engage Rank, Sosmed Rank,
   High/Low, Kasat Binmas, Kasatker, dan Rekap All Sosmed) **dihentikan** sehingga
   hanya pengambilan konten dasar dan pengingat tugas otomatis yang berjalan
