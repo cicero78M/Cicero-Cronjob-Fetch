@@ -297,6 +297,32 @@ describe('tugasNotificationService', () => {
       );
     });
 
+
+    it('should build scheduled payload safely when generated timestamp formatter receives default date', async () => {
+      getPostsTodayByClientInsta.mockResolvedValue([]);
+      getPostsTodayByClientTiktok.mockResolvedValue([]);
+
+      const changes = {
+        igAdded: [],
+        tiktokAdded: [],
+        igDeleted: 0,
+        tiktokDeleted: 0,
+        linkChanges: []
+      };
+
+      await expect(
+        sendTugasNotification(mockWaClient, 'TEST_CLIENT', changes, {
+          forceScheduled: true
+        })
+      ).resolves.toBe(true);
+
+      expect(safeSendMessage).toHaveBeenCalledTimes(1);
+      expect(safeSendMessage).toHaveBeenCalledWith(
+        mockWaClient,
+        '120363123456789@g.us',
+        expect.stringMatching(/🕒 Pengambilan data: .* WIB/)
+      );
+    });
     it('should not send notification if no changes and not scheduled', async () => {
       const changes = {
         igAdded: [],

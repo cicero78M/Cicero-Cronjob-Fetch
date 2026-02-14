@@ -1,5 +1,5 @@
 # Scheduled WhatsApp Notifications
-*Last updated: 2026-02-14*
+*Last updated: 2026-02-15*
 
 Dokumen ini menyelaraskan behavior notifikasi dengan implementasi aktual di `src/cron/cronDirRequestFetchSosmed.js`.
 
@@ -40,6 +40,15 @@ Notifikasi dikirim jika:
 Pada slot wajib 17:05, enqueue dijalankan dengan `forceScheduled=true` saat slot tersebut belum pernah dinotifikasi untuk client terkait, sehingga tiap client aktif tetap menerima maksimal 1 notifikasi scheduled pada slot jam yang sama.
 
 Jika state storage gagal (load/upsert state), sistem masuk mode konservatif: notifikasi hanya dikirim saat ada perubahan.
+
+
+## Format Pesan Scheduled Notification
+
+Untuk `forceScheduled=true`, payload pesan tetap mengikuti kontrak berikut:
+- Header: `📋 *Daftar Tugas - {nama client}*`
+- Timestamp pengambilan data: `🕒 Pengambilan data: {hari}, {tanggal} {bulan} {tahun} {jam}.{menit} WIB`
+- Timestamp dihasilkan helper `formatJakartaHumanTimestamp(value = new Date())` yang memformat waktu dengan `jakartaHumanDateTimeFormatter` dan menambahkan suffix `WIB`.
+- Jika nilai tanggal tidak valid, helper mengembalikan `-` agar pembentukan payload tidak melempar runtime error.
 
 ## Catatan Backward Compatibility
 
