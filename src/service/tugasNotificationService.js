@@ -244,8 +244,10 @@ function formatInstaTaskSection(posts) {
     const shortcode = post.shortcode || '';
     const caption = post.caption ? truncateText(post.caption, 60) : '(Tidak ada caption)';
     const link = `https://www.instagram.com/p/${shortcode}/`;
-    
+    const likes = Number.isFinite(Number(post.like_count)) ? Number(post.like_count) : 0;
+
     lines.push(`${index + 1}. ${link}`);
+    lines.push(`   ❤️ ${likes} likes`);
     lines.push(`   _${caption}_`);
   });
 

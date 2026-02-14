@@ -319,8 +319,8 @@ describe('tugasNotificationService', () => {
     it('should include Instagram and TikTok links grouped by platform in scheduled notification', async () => {
       // Mock Instagram posts
       getPostsTodayByClientInsta.mockResolvedValue([
-        { shortcode: 'abc123', caption: 'Test Instagram post 1' },
-        { shortcode: 'def456', caption: 'Test Instagram post 2' }
+        { shortcode: 'abc123', caption: 'Test Instagram post 1', like_count: 12 },
+        { shortcode: 'def456', caption: 'Test Instagram post 2', like_count: 5 }
       ]);
       
       // Mock TikTok posts
@@ -361,7 +361,18 @@ describe('tugasNotificationService', () => {
         '120363123456789@g.us',
         expect.stringContaining('https://www.instagram.com/p/def456/')
       );
-      
+
+      expect(safeSendMessage).toHaveBeenCalledWith(
+        mockWaClient,
+        '120363123456789@g.us',
+        expect.stringContaining('❤️ 12 likes')
+      );
+      expect(safeSendMessage).toHaveBeenCalledWith(
+        mockWaClient,
+        '120363123456789@g.us',
+        expect.stringContaining('❤️ 5 likes')
+      );
+
       // Verify TikTok section is included
       expect(safeSendMessage).toHaveBeenCalledWith(
         mockWaClient,
