@@ -70,7 +70,7 @@ dirrequest tanpa langkah tambahan.
   engagement-only aktualnya adalah `30 17-21 * * *` dan `0 18-22 * * *`
   (17:30 s.d. 22:00 WIB).
   Pengambilan konten baru aktif pada cron `5,30 6-16 * * *` dan slot wajib
-  `0 17 * * *` (17:00 WIB) untuk semua client aktif.
+  `5 17 * * *` (17:05 WIB) untuk semua client aktif.
 
 ## Absensi Likes Instagram (Format Dirrequest)
 - Rekap absensi likes Instagram (menu dirrequest untuk Direktorat) kini

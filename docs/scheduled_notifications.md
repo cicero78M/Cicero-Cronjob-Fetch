@@ -5,7 +5,7 @@ Dokumen ini menyelaraskan behavior notifikasi dengan implementasi aktual di `src
 
 ## Ringkasan Implementasi Aktual
 
-- Notifikasi tugas berjalan stateful per slot jam, dengan slot wajib fetch+scheduled notification pada 17:00 WIB.
+- Notifikasi tugas berjalan stateful per slot jam, dengan slot wajib fetch+scheduled notification pada 17:05 WIB.
 - Implementasi memakai kombinasi:
   1. **Change-based trigger** (`hasNotableChanges`) dan
   2. **Hourly trigger berbasis state** (`shouldSendHourlyNotification`) selama periode post-fetch.
@@ -15,8 +15,8 @@ Dokumen ini menyelaraskan behavior notifikasi dengan implementasi aktual di `src
 ## Jadwal Cron Aktual
 
 ### 1) Post Fetch + Engagement Refresh
-- Cron gabungan: `5,30 6-16 * * *` + `0 17 * * *`
-- Jam jalan: 06:05, 06:30, 07:05, 07:30, ... , 16:05, 16:30, 17:00 WIB
+- Cron gabungan: `5,30 6-16 * * *` + `5 17 * * *`
+- Jam jalan: 06:05, 06:30, 07:05, 07:30, ... , 16:05, 16:30, 17:05 WIB
 - Menjalankan:
   - fetch post Instagram
   - fetch post TikTok
@@ -35,9 +35,9 @@ Dokumen ini menyelaraskan behavior notifikasi dengan implementasi aktual di `src
 
 Notifikasi dikirim jika:
 - ada perubahan signifikan, **atau**
-- `lastNotifiedSlot` berbeda dengan slot run saat ini (`currentSlotKey`) dan masih di window post-fetch (06:00-17:59 WIB, termasuk run wajib 17:00).
+- `lastNotifiedSlot` berbeda dengan slot run saat ini (`currentSlotKey`) dan masih di window post-fetch (06:00-17:59 WIB, termasuk run wajib 17:05).
 
-Pada slot wajib 17:00, enqueue dijalankan dengan `forceScheduled=true` saat slot tersebut belum pernah dinotifikasi untuk client terkait, sehingga tiap client aktif tetap menerima maksimal 1 notifikasi scheduled pada slot jam yang sama.
+Pada slot wajib 17:05, enqueue dijalankan dengan `forceScheduled=true` saat slot tersebut belum pernah dinotifikasi untuk client terkait, sehingga tiap client aktif tetap menerima maksimal 1 notifikasi scheduled pada slot jam yang sama.
 
 Jika state storage gagal (load/upsert state), sistem masuk mode konservatif: notifikasi hanya dikirim saat ada perubahan.
 
