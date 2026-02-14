@@ -161,6 +161,19 @@ Format group ID WhatsApp harus:
    - Jika gagal: retry exponential backoff sampai `max_attempts`, lalu `dead_letter`
 
 
+### Kontrak API `sendTugasNotification`
+
+Signature saat ini:
+
+```js
+sendTugasNotification(waClient, clientId, changes, options)
+```
+
+`options` hanya menerima properti berikut:
+- `forceScheduled` (`boolean`, default `false`)
+
+Catatan: opsi count seperti `igCount` dan `tiktokCount` tidak lagi menjadi input API; total konten pada pesan scheduled dihitung langsung dari hasil fetch post harian.
+
 ### Ringkasan `forceScheduled` pada payload
 
 - `forceScheduled=true`
