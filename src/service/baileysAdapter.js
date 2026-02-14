@@ -120,6 +120,48 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   let lastMacErrorSignature = null;
   let lastMacErrorSignatureTime = 0;
 
+  const BAD_MAC_CATEGORY_PATTERNS = [
+    {
+      category: 'bad-mac-decrypt',
+      patterns: ['failed to decrypt message with any known session'],
+      canonicalText: 'failed to decrypt message with any known session',
+    },
+    {
+      category: 'bad-mac-session-error',
+      patterns: ['session error'],
+      canonicalText: 'session error',
+    },
+    {
+      category: 'bad-mac-decrypt',
+      patterns: ['bad mac'],
+      canonicalText: 'bad mac',
+    },
+  ];
+
+  const normalizeBadMacErrorText = (errorMsg) => {
+    return String(errorMsg || '')
+      .toLowerCase()
+      .replace(/\b\d{6,}\b/g, '<id>')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  const extractBadMacCategory = (normalizedErrorText) => {
+    for (const matcher of BAD_MAC_CATEGORY_PATTERNS) {
+      if (matcher.patterns.some((pattern) => normalizedErrorText.includes(pattern))) {
+        return {
+          errorCategory: matcher.category,
+          errorCoreText: matcher.canonicalText,
+        };
+      }
+    }
+
+    return {
+      errorCategory: 'bad-mac-unknown',
+      errorCoreText: 'bad mac',
+    };
+  };
+
   const readSessionLock = async () => {
     try {
       const rawLock = await fs.promises.readFile(sessionLockPath, 'utf8');
@@ -229,8 +271,10 @@ export async function createBaileysClient(clientId = 'wa-admin') {
    */
   const handleBadMacError = (errorMsg, source = 'logger', senderJid = null) => {
     const now = Date.now();
-    const normalizedError = String(errorMsg || '').toLowerCase();
-    const errorSignature = `${senderJid || ''}|${normalizedError.slice(0, 240)}`;
+    const normalizedError = normalizeBadMacErrorText(errorMsg);
+    const { errorCategory, errorCoreText } = extractBadMacCategory(normalizedError);
+    const senderKey = senderJid || '';
+    const errorSignature = `${senderKey}|${source}|${errorCategory}`;
 
     if (
       lastMacErrorSignature &&
@@ -305,8 +349,8 @@ export async function createBaileysClient(clientId = 'wa-admin') {
     const senderInfo = senderJid ? ` from ${senderJid}` : '';
     
     console.error(
-      `[BAILEYS] Bad MAC error detected in ${source} (${consecutiveMacErrors}/${MAX_CONSECUTIVE_MAC_ERRORS})${errorType}${senderInfo}:`,
-      errorMsg
+      `[BAILEYS] Bad MAC error detected in ${source} (${consecutiveMacErrors}/${MAX_CONSECUTIVE_MAC_ERRORS})${errorType}${senderInfo} [${errorCategory}]:`,
+      errorCoreText
     );
     
     // Trigger recovery if:

@@ -179,6 +179,51 @@ await new Promise(resolve => setTimeout(resolve, 2000));
 - Consistent behavior across the codebase
 - Better diagnostics and logging
 
+### 7. Stable Bad MAC Dedup Fingerprinting ✅
+
+To avoid duplicate counting when the same Bad MAC event appears with different stack traces or dynamic IDs, fingerprinting now uses normalized metadata instead of raw stack text.
+
+**What changed:**
+- Normalize error text by removing long numeric sequences (dynamic IDs/session tokens)
+- Extract only core error signals (`bad mac`, `failed to decrypt message with any known session`, `session error`)
+- Build dedup signature from:
+  - `senderJid` (optional)
+  - `source` (`logger`, `connection`, `message`)
+  - `errorCategory` (example: `bad-mac-decrypt`)
+
+**Before (raw stack-based, unstable):**
+```text
+errorSignature = `${senderJid}|${normalizedError.slice(0, 240)}`
+
+# Example A
+Session Error: Bad MAC ... at verifyMAC ... id=628111122223333
+
+# Example B
+Failed to decrypt message with any known session ... id=777888999111222
+
+=> Could be treated as different signatures because stack/content prefix differs.
+```
+
+**After (category-based, stable):**
+```text
+normalized = removeLongDigits(error)
+category = bad-mac-decrypt
+errorSignature = `${senderJid}|${source}|${category}`
+
+# Example A (connection source)
+Session Error: Bad MAC ... id=628111122223333 -> category=bad-mac-decrypt
+
+# Example B (connection source)
+Failed to decrypt message with any known session ... id=777888999111222 -> category=bad-mac-decrypt
+
+=> Same fingerprint (`|connection|bad-mac-decrypt`) within MAC_ERROR_DEDUP_WINDOW, so counted once.
+```
+
+**Result:**
+- More reliable deduplication in burst conditions
+- Less false increment of `consecutiveMacErrors`
+- Recovery logic triggers based on true unique error bursts
+
 ## Configuration
 
 All thresholds are configurable via constants:
