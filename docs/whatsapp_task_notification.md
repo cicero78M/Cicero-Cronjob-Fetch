@@ -83,7 +83,7 @@ client_group = '123456789-1234567890@g.us,098765432-0987654321@g.us'
 
 Format group ID WhatsApp harus:
 - Berakhiran `@g.us` untuk grup
-- Atau berformat `@c.us` untuk individual chat
+- ID individual (`@s.whatsapp.net` / `@c.us`) dianggap tidak valid untuk notifikasi grup
 
 ## Implementasi Teknis
 
@@ -135,16 +135,20 @@ Format group ID WhatsApp harus:
 
 ## Cara Kerja
 
-1. **Cron job berjalan** (setiap 30 menit, 06:00-22:00 WIB)
-2. **Fetch konten sosial media** untuk setiap client aktif
+1. **Cron job berjalan sesuai jadwal aktual**:
+   - Post fetch + engagement refresh: `5,30 6-16 * * *` + `0 17 * * *`
+   - Engagement-only: `30 17-21 * * *` + `0 18-22 * * *`
+2. **Fetch konten sosial media** untuk setiap client aktif (hanya pada jadwal post-fetch; engagement-only tidak fetch post baru)
 3. **Hitung perubahan**:
    - Bandingkan jumlah post sebelum dan sesudah fetch
    - Jika ada penambahan, ambil detail post baru dari database
    - Jika ada pengurangan, hitung selisihnya
    - Ambil link report yang diupdate dalam 24 jam terakhir
 4. **Enqueue notifikasi ke outbox**:
-   - Jika ada perubahan yang perlu dinotifikasikan
-   - Format pesan sesuai jenis perubahan
+   - Trigger saat ada perubahan signifikan **atau** slot hourly Jakarta baru
+   - Slot hourly dihitung lewat `buildJakartaHourlySlotKey()` dengan format `YYYY-MM-DD-HH@05`
+   - Jika menit runtime `< 05`, slot dibulatkan ke jam sebelumnya agar stabil
+   - Saat trigger hourly aktif, enqueue memakai `forceScheduled=true`
    - Simpan event ke `wa_notification_outbox` dengan status `pending` dan `idempotency_key`
    - Deduplikasi otomatis saat insert (`ON CONFLICT idempotency_key DO NOTHING`)
 5. **Worker kirim WhatsApp**:
@@ -156,6 +160,24 @@ Format group ID WhatsApp harus:
    - Jika sukses: status `sent` + isi `sent_at`
    - Jika gagal: retry exponential backoff sampai `max_attempts`, lalu `dead_letter`
 
+
+### Ringkasan `forceScheduled` pada payload
+
+- `forceScheduled=true`
+  - Dipakai untuk notifikasi hourly/scheduled (termasuk slot wajib 17:00).
+  - Pesan yang dibentuk adalah daftar tugas terjadwal (`formatScheduledTaskList`).
+  - Idempotency key menyertakan `scheduled` + `hourKey` agar maksimal satu event per jam per grup untuk payload yang sama.
+- `forceScheduled=false`
+  - Dipakai untuk notifikasi berbasis perubahan (`igAdded`, `tiktokAdded`, `igDeleted`, `tiktokDeleted`, `linkChanges`).
+  - Idempotency key memakai mode `change`.
+
+### Contoh timeline harian (enqueue vs send)
+
+1. `06:05` cron post-fetch berjalan, slot `...-06@05` dievaluasi.
+2. Bila syarat terpenuhi, sistem **enqueue** event ke `wa_notification_outbox` (belum mengirim WA langsung).
+3. `cronWaOutboxWorker` (tiap menit) claim event `pending/retrying`, kirim ke WA gateway, lalu update status `sent/retrying/dead_letter`.
+4. `06:30` tetap berada di slot `...-06@05`; bila `last_notified_slot` sudah sama dan tidak ada perubahan baru, tidak enqueue scheduled ulang.
+5. `17:00` run wajib post-fetch tetap dievaluasi sebagai slot hourly; saat slot baru, `forceScheduled=true` memastikan pesan daftar tugas tetap terbuat walau tanpa perubahan data.
 
 ## Troubleshooting
 

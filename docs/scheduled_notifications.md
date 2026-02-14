@@ -51,3 +51,14 @@ Setiap perubahan fungsi/module yang berdampak ke notifikasi harus:
 - memperbarui dokumen ini,
 - memperbarui `docs/notification_schedule_source_of_truth.md`, dan
 - memperbarui dokumen terkait lain (`README.md`, `docs/business_process.md`, `docs/wa_*.md` yang terdampak).
+
+
+## Timeline Harian (Outbox: Enqueue vs Send)
+
+1. Cron `runCron` dieksekusi sesuai jadwal (`5,30 6-16`, `0 17`, dan engagement-only schedules).
+2. Per client, sistem mengevaluasi perubahan (`hasNotableChanges`) dan slot hourly (`buildJakartaHourlySlotKey`).
+3. Jika lolos syarat, sistem memanggil `enqueueTugasNotification` (enqueue saja, belum kirim WA).
+4. Event masuk `wa_notification_outbox` status `pending` dengan `idempotency_key`.
+5. `cronWaOutboxWorker` claim event `pending/retrying`, mengirim WA, lalu update status `sent/retrying/dead_letter`.
+
+Dengan pola ini, fetch cron tetap cepat karena delivery WA dipindah ke worker terpisah.
