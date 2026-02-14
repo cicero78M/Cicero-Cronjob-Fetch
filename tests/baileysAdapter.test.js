@@ -592,6 +592,56 @@ test('baileys adapter deduplicates repeated Bad MAC signals across logger and co
   consoleErrorSpy.mockRestore();
 });
 
+test('baileys adapter deduplicates Bad MAC errors with different stacks in dedup window', async () => {
+  const client = await createBaileysClient('test-client');
+  activeClients.push(client);
+  await client.connect();
+
+  const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+
+  if (mockSocketEvents['connection.update']) {
+    mockSocketEvents['connection.update'].forEach((handler) =>
+      handler({
+        connection: 'close',
+        lastDisconnect: {
+          error: {
+            message: 'Failed to decrypt message with any known session. Bad MAC Error: Bad MAC id 628111122223333',
+            stack:
+              'Error: failed to decrypt message with any known session id 628111122223333\n at Object.verifyMAC\n at SessionCipher.doDecryptWhisperMessage',
+            output: { statusCode: 428 }
+          }
+        }
+      })
+    );
+  }
+
+  if (mockSocketEvents['connection.update']) {
+    mockSocketEvents['connection.update'].forEach((handler) =>
+      handler({
+        connection: 'close',
+        lastDisconnect: {
+          error: {
+            message: 'Failed to decrypt message with any known session. Bad MAC Error: Bad MAC id 777888999111222',
+            stack:
+              'Error: failed to decrypt message with any known session\n at decryptForMessage 123456789012345\n at SessionCipher.decryptWithSessions',
+            output: { statusCode: 428 }
+          }
+        }
+      })
+    );
+  }
+
+  const badMacDetectionCalls = consoleErrorSpy.mock.calls.filter((call) =>
+    call[0]?.includes('[BAILEYS] Bad MAC error detected in connection')
+  );
+
+  expect(badMacDetectionCalls).toHaveLength(1);
+  expect(badMacDetectionCalls[0][0]).toContain('[bad-mac-decrypt]');
+  expect(badMacDetectionCalls[0][1]).toBe('failed to decrypt message with any known session');
+
+  consoleErrorSpy.mockRestore();
+});
+
 test('baileys adapter blocks connect when session lock belongs to another active process', async () => {
   const tempAuthPath = fs.mkdtempSync(path.join(os.tmpdir(), 'baileys-lock-test-'));
   process.env.WA_AUTH_DATA_PATH = tempAuthPath;
