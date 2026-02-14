@@ -22,6 +22,11 @@ Pesan dikirim dalam format Indonesia dengan markdown WhatsApp:
 - Daftar konten dengan detail (shortcode/video_id, caption/deskripsi, link)
 - Instruksi tindak lanjut
 
+Untuk **notifikasi terjadwal daftar tugas**, setiap item konten kini juga memuat metadata engagement:
+- `Upload: <hari>, <tanggal> <jam:menit> WIB` (zona waktu Asia/Jakarta)
+- `Likes: <angka format id-ID> | Komentar: <angka format id-ID>`
+- Nilai null/undefined akan fallback aman (`Upload: -`, `Likes: -` untuk Instagram bila data likes tidak tersedia, dan count lain menjadi `0`).
+
 **Contoh pesan penambahan Instagram:**
 ```
 📸 *Tugas Instagram Baru - POLDA JATIM*

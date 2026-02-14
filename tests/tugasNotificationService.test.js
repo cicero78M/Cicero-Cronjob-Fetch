@@ -323,14 +323,39 @@ describe('tugasNotificationService', () => {
     it('should include Instagram and TikTok links grouped by platform in scheduled notification', async () => {
       // Mock Instagram posts
       getPostsTodayByClientInsta.mockResolvedValue([
-        { shortcode: 'abc123', caption: 'Test Instagram post 1', like_count: 12 },
-        { shortcode: 'def456', caption: 'Test Instagram post 2', like_count: 5 }
+        {
+          shortcode: 'abc123',
+          caption: 'Test Instagram post 1',
+          created_at: '2026-02-17T00:15:00.000Z',
+          comment_count: 8,
+        },
+        {
+          shortcode: 'def456',
+          caption: 'Test Instagram post 2',
+          created_at: '2026-02-17T02:15:00.000Z',
+          like_count: null,
+          comment_count: null,
+        }
       ]);
       
       // Mock TikTok posts
       getPostsTodayByClientTiktok.mockResolvedValue([
-        { video_id: 'tiktok123', caption: 'Test TikTok video 1', author_username: 'testuser' },
-        { video_id: 'tiktok456', caption: 'Test TikTok video 2', author_username: 'testuser' }
+        {
+          video_id: 'tiktok123',
+          caption: 'Test TikTok video 1',
+          author_username: 'testuser',
+          created_at: '2026-02-17T01:20:00.000Z',
+          like_count: 1200,
+          comment_count: 25,
+        },
+        {
+          video_id: 'tiktok456',
+          caption: 'Test TikTok video 2',
+          author_username: 'testuser',
+          created_at: null,
+          like_count: null,
+          comment_count: undefined,
+        }
       ]);
 
       const changes = {
@@ -348,51 +373,23 @@ describe('tugasNotificationService', () => {
       });
 
       expect(result).toBe(true);
+      const sentMessage = safeSendMessage.mock.calls[0][2];
       
-      // Verify Instagram section is included
-      expect(safeSendMessage).toHaveBeenCalledWith(
-        mockWaClient,
-        '120363123456789@g.us',
-        expect.stringContaining('📸 *Tugas Instagram (2 konten):*')
-      );
-      expect(safeSendMessage).toHaveBeenCalledWith(
-        mockWaClient,
-        '120363123456789@g.us',
-        expect.stringContaining('https://www.instagram.com/p/abc123/')
-      );
-      expect(safeSendMessage).toHaveBeenCalledWith(
-        mockWaClient,
-        '120363123456789@g.us',
-        expect.stringContaining('https://www.instagram.com/p/def456/')
-      );
-
-      expect(safeSendMessage).toHaveBeenCalledWith(
-        mockWaClient,
-        '120363123456789@g.us',
-        expect.stringContaining('❤️ 12 likes')
-      );
-      expect(safeSendMessage).toHaveBeenCalledWith(
-        mockWaClient,
-        '120363123456789@g.us',
-        expect.stringContaining('❤️ 5 likes')
-      );
-
-      // Verify TikTok section is included
-      expect(safeSendMessage).toHaveBeenCalledWith(
-        mockWaClient,
-        '120363123456789@g.us',
-        expect.stringContaining('🎵 *Tugas TikTok (2 konten):*')
-      );
-      expect(safeSendMessage).toHaveBeenCalledWith(
-        mockWaClient,
-        '120363123456789@g.us',
-        expect.stringContaining('https://www.tiktok.com/@testuser/video/tiktok123')
-      );
-      expect(safeSendMessage).toHaveBeenCalledWith(
-        mockWaClient,
-        '120363123456789@g.us',
-        expect.stringContaining('https://www.tiktok.com/@testuser/video/tiktok456')
-      );
+      // Verify Instagram section and metadata are included
+      expect(sentMessage).toContain('📸 *Tugas Instagram (2 konten):*');
+      expect(sentMessage).toContain('https://www.instagram.com/p/abc123/');
+      expect(sentMessage).toContain('https://www.instagram.com/p/def456/');
+      expect(sentMessage).toContain('Upload:');
+      expect(sentMessage).toContain('WIB');
+      expect(sentMessage).toContain('Likes: - | Komentar: 0');
+      expect(sentMessage).toContain('Likes: 1.200 | Komentar: 25');
+      
+      // Verify TikTok section and metadata are included
+      expect(sentMessage).toContain('🎵 *Tugas TikTok (2 konten):*');
+      expect(sentMessage).toContain('https://www.tiktok.com/@testuser/video/tiktok123');
+      expect(sentMessage).toContain('https://www.tiktok.com/@testuser/video/tiktok456');
+      expect(sentMessage).toContain('Upload: -');
+      expect(sentMessage).toContain('Likes: 0 | Komentar: 0');
     });
   });
 });

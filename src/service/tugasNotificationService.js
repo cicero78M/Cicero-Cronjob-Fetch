@@ -8,6 +8,17 @@ import { enqueueOutboxEvents } from '../model/waNotificationOutboxModel.js';
 import { createHash } from 'crypto';
 
 const LOG_TAG = 'TUGAS_NOTIFICATION';
+const jakartaDateTimeFormatter = new Intl.DateTimeFormat('id-ID', {
+  timeZone: 'Asia/Jakarta',
+  weekday: 'long',
+  day: '2-digit',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+const indonesianNumberFormatter = new Intl.NumberFormat('id-ID');
 
 const jakartaHumanDateTimeFormatter = new Intl.DateTimeFormat('id-ID', {
   timeZone: 'Asia/Jakarta',
@@ -32,18 +43,33 @@ function truncateText(text, maxLength) {
 }
 
 /**
- * Format date into human-readable Jakarta timestamp.
- * Example output: Senin, 17 Februari 2026 08:30 WIB
- * @param {Date} date - Date object to format
- * @returns {string} Jakarta-localized human-readable timestamp
+ * Format number using Indonesian locale
+ * @param {number|string} value - Numeric value
+ * @param {number|string} fallback - Fallback value when not a valid number
+ * @returns {string} Formatted number text
  */
-function formatJakartaHumanTimestamp(date = new Date()) {
-  const localizedDateTime = jakartaHumanDateTimeFormatter
-    .format(date)
-    .replace(' pukul ', ' ')
-    .replace('.', ':');
+function formatCount(value, fallback = 0) {
+  const numericValue = Number(value);
 
-  return `${localizedDateTime} WIB`;
+  if (!Number.isFinite(numericValue)) {
+    return `${fallback}`;
+  }
+
+  return indonesianNumberFormatter.format(numericValue);
+}
+
+/**
+ * Format date time into Jakarta timezone display with WIB suffix
+ * @param {string|Date} value - Date value
+ * @returns {string} Formatted date time
+ */
+function formatJakartaDateTime(value) {
+  if (!value) return '-';
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+
+  return `${jakartaDateTimeFormatter.format(date)} WIB`;
 }
 
 /**
@@ -270,11 +296,20 @@ function formatInstaTaskSection(posts) {
     const shortcode = post.shortcode || '';
     const caption = post.caption ? truncateText(post.caption, 60) : '(Tidak ada caption)';
     const link = `https://www.instagram.com/p/${shortcode}/`;
+<<<<<<< cicero/update-task-formatter-to-include-metadata
+    const uploadDate = formatJakartaDateTime(post.created_at);
+    const likeText = post.like_count == null ? '-' : formatCount(post.like_count, 0);
+    const commentText = formatCount(post.comment_count, 0);
+    
+=======
     const likes = Number.isFinite(Number(post.like_count)) ? Number(post.like_count) : 0;
 
+>>>>>>> main
     lines.push(`${index + 1}. ${link}`);
     lines.push(`   ❤️ ${likes} likes`);
     lines.push(`   _${caption}_`);
+    lines.push(`   Upload: ${uploadDate}`);
+    lines.push(`   Likes: ${likeText} | Komentar: ${commentText}`);
   });
 
   lines.push('');
@@ -299,9 +334,14 @@ function formatTiktokTaskSection(posts) {
     const description = post.caption ? truncateText(post.caption, 60) : '(Tidak ada deskripsi)';
     const username = post.author_username || 'user';
     const link = `https://www.tiktok.com/@${username}/video/${videoId}`;
+    const uploadDate = formatJakartaDateTime(post.created_at);
+    const likeText = formatCount(post.like_count, 0);
+    const commentText = formatCount(post.comment_count, 0);
     
     lines.push(`${index + 1}. ${link}`);
     lines.push(`   _${description}_`);
+    lines.push(`   Upload: ${uploadDate}`);
+    lines.push(`   Likes: ${likeText} | Komentar: ${commentText}`);
   });
 
   lines.push('');
