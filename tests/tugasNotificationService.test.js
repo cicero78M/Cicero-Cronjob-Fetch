@@ -257,6 +257,10 @@ describe('tugasNotificationService', () => {
         '120363123456789@g.us',
         expect.stringContaining('📋 *Daftar Tugas - Test Client*')
       );
+
+      const scheduledMessage = safeSendMessage.mock.calls[0][2];
+      expect(scheduledMessage).toContain('🕒 Pengambilan data:');
+      expect(scheduledMessage).toMatch(/🕒 Pengambilan data: .* WIB/);
       expect(safeSendMessage).toHaveBeenCalledWith(
         mockWaClient,
         '120363123456789@g.us',
