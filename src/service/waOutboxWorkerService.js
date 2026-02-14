@@ -12,10 +12,22 @@ const LOG_TAG = 'WA_OUTBOX_WORKER';
 const DEFAULT_BATCH_SIZE = 20;
 const BASE_DELAY_SECONDS = 30;
 const MAX_BACKOFF_SECONDS = 3600;
+const DEFAULT_PROCESSING_STALE_SECONDS = 300;
 
 function computeBackoffSeconds(attemptCount) {
   const exponent = Math.max(0, Number(attemptCount || 1) - 1);
   return Math.min(BASE_DELAY_SECONDS * (2 ** exponent), MAX_BACKOFF_SECONDS);
+}
+
+
+function getProcessingStaleSeconds() {
+  const configuredValue = Number.parseInt(process.env.WA_OUTBOX_PROCESSING_STALE_SECONDS || '', 10);
+
+  if (!Number.isFinite(configuredValue) || configuredValue <= 0) {
+    return DEFAULT_PROCESSING_STALE_SECONDS;
+  }
+
+  return configuredValue;
 }
 
 function buildErrorMessage(error) {
@@ -32,9 +44,12 @@ function nextAttemptAtIso(attemptCount) {
 }
 
 export async function processWaOutboxBatch(batchSize = DEFAULT_BATCH_SIZE) {
-  const releasedCount = await releaseProcessingOutbox();
+  const processingStaleSeconds = getProcessingStaleSeconds();
+  const releasedCount = await releaseProcessingOutbox(processingStaleSeconds);
   if (releasedCount > 0) {
-    console.warn(`[${LOG_TAG}] Released ${releasedCount} stale processing rows back to retrying status`);
+    console.warn(
+      `[${LOG_TAG}] Released ${releasedCount} stale processing rows back to retrying status (stale_threshold_seconds=${processingStaleSeconds})`
+    );
   }
 
   const rows = await claimPendingOutboxBatch(batchSize);
