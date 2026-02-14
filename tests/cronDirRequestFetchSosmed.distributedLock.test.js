@@ -1,5 +1,7 @@
 import { jest } from '@jest/globals';
 
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
+
 const mockScheduleCronJob = jest.fn();
 const mockFindAllActiveClientsWithSosmed = jest.fn();
 const mockAcquireDistributedLock = jest.fn();
@@ -76,4 +78,42 @@ test('runCron skips processing when distributed lock is held by another instance
     ttlSeconds: 2100,
   });
   expect(mockFindAllActiveClientsWithSosmed).not.toHaveBeenCalled();
+});
+
+test('runCron releases distributed lock when local in-flight guard skips execution', async () => {
+  const release = jest.fn().mockResolvedValue();
+  let unblockFirstRun;
+
+  mockAcquireDistributedLock
+    .mockResolvedValueOnce({
+      acquired: true,
+      release,
+    })
+    .mockResolvedValueOnce({
+      acquired: true,
+      release,
+    });
+
+  mockFindAllActiveClientsWithSosmed.mockImplementationOnce(
+    () => new Promise((resolve) => {
+      unblockFirstRun = resolve;
+    })
+  );
+
+  const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+
+  const firstRunPromise = runCron();
+  await Promise.resolve();
+
+  await runCron();
+
+  unblockFirstRun([]);
+  await firstRunPromise;
+
+  expect(release).toHaveBeenCalledTimes(2);
+  const allLogs = logSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+  expect(allLogs).toContain('action=inFlight | result=queued');
+  expect(allLogs).toContain('action=lock_released | result=released');
+
+  logSpy.mockRestore();
 });
