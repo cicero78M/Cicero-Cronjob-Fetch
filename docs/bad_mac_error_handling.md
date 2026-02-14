@@ -44,6 +44,13 @@ The adapter monitors for "Bad MAC" patterns in **three locations** (prioritized 
    - Logs any errors that occur while processing received messages
    - Tertiary detection for edge cases
 
+### De-duplication and centralized recovery
+
+All Bad MAC signals are now routed to one handler (`handleBadMacError`) including connection-level failures.
+To prevent false escalation, the adapter deduplicates identical Bad MAC signals that arrive within a short window
+(e.g. logger + connection update for the same failure burst). This avoids double-counting while keeping the existing
+recovery flow (`reinitializeClient(..., { clearAuthSessionOverride: true })`) unchanged.
+
 ### Recovery Process
 
 1. **First Error**: Log the error and increment counter (1/2)
@@ -322,7 +329,8 @@ if (lastDisconnect?.error) {
                        errorStack.includes('Bad MAC');
   
   if (isBadMacError) {
-    // Same recovery logic as logger-level detection
+    // Forward to centralized handler (includes cooldown + dedup + recovery trigger)
+    handleBadMacError(errorMessage, 'connection');
   }
 }
 ```
