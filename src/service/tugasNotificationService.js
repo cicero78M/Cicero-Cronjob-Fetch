@@ -73,6 +73,18 @@ function formatJakartaDateTime(value) {
 }
 
 /**
+ * Format current or provided date time in Jakarta timezone for scheduled notification header
+ * @param {string|Date} [value] - Optional date value
+ * @returns {string} Formatted date time
+ */
+function formatJakartaHumanTimestamp(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+
+  return `${jakartaHumanDateTimeFormatter.format(date)} WIB`;
+}
+
+/**
  * Format message for Instagram post additions
  * @param {Array} posts - Array of new Instagram posts
  * @param {string} clientName - Name of the client
@@ -448,13 +460,11 @@ function hasChanges(changes) {
  * @param {Object} changes - Object containing change details
  * @param {Object} options - Optional parameters
  * @param {boolean} options.forceScheduled - Force send as scheduled notification (always send)
- * @param {number} options.igCount - Current Instagram count (for scheduled notifications)
- * @param {number} options.tiktokCount - Current TikTok count (for scheduled notifications)
  * @returns {Promise<boolean>} Success status
  */
 export async function sendTugasNotification(waClient, clientId, changes, options = {}) {
   try {
-    const { forceScheduled = false, igCount = 0, tiktokCount = 0 } = options;
+    const { forceScheduled = false } = options;
 
     if (!waClient) {
       console.warn(`[${LOG_TAG}] WhatsApp client not available`);

@@ -246,9 +246,7 @@ describe('tugasNotificationService', () => {
       };
 
       const result = await sendTugasNotification(mockWaClient, 'TEST_CLIENT', changes, {
-        forceScheduled: true,
-        igCount: 10,
-        tiktokCount: 5
+        forceScheduled: true
       });
 
       expect(result).toBe(true);
@@ -283,9 +281,7 @@ describe('tugasNotificationService', () => {
       };
 
       const result = await sendTugasNotification(mockWaClient, 'TEST_CLIENT', changes, {
-        forceScheduled: true,
-        igCount: 10,
-        tiktokCount: 5
+        forceScheduled: true
       });
 
       expect(result).toBe(true);
@@ -311,13 +307,38 @@ describe('tugasNotificationService', () => {
       };
 
       const result = await sendTugasNotification(mockWaClient, 'TEST_CLIENT', changes, {
-        forceScheduled: false,
-        igCount: 10,
-        tiktokCount: 5
+        forceScheduled: false
       });
 
       expect(result).toBe(false);
       expect(safeSendMessage).not.toHaveBeenCalled();
+    });
+
+    it('should keep scheduled message totals based on fetched posts without count options', async () => {
+      getPostsTodayByClientInsta.mockResolvedValue([
+        { shortcode: 'post1', caption: 'Post 1' },
+        { shortcode: 'post2', caption: 'Post 2' },
+      ]);
+      getPostsTodayByClientTiktok.mockResolvedValue([
+        { video_id: 'vid1', caption: 'Video 1', author_username: 'testuser' },
+      ]);
+
+      const changes = {
+        igAdded: [],
+        tiktokAdded: [],
+        igDeleted: 0,
+        tiktokDeleted: 0,
+        linkChanges: []
+      };
+
+      const result = await sendTugasNotification(mockWaClient, 'TEST_CLIENT', changes, {
+        forceScheduled: true
+      });
+
+      expect(result).toBe(true);
+      const scheduledMessage = safeSendMessage.mock.calls[0][2];
+      expect(scheduledMessage).toContain('📸 Instagram: *2* konten');
+      expect(scheduledMessage).toContain('🎵 TikTok: *1* konten');
     });
 
     it('should include Instagram and TikTok links grouped by platform in scheduled notification', async () => {
@@ -367,9 +388,7 @@ describe('tugasNotificationService', () => {
       };
 
       const result = await sendTugasNotification(mockWaClient, 'TEST_CLIENT', changes, {
-        forceScheduled: true,
-        igCount: 2,
-        tiktokCount: 2
+        forceScheduled: true
       });
 
       expect(result).toBe(true);

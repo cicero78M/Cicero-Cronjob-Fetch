@@ -305,8 +305,6 @@ export async function processClient(client, options = {}) {
     try {
       const notificationOptions = {
         forceScheduled: shouldSendHourly,
-        igCount: countsAfter.ig,
-        tiktokCount: countsAfter.tiktok,
       };
 
       const enqueueResult = await enqueueTugasNotification(
