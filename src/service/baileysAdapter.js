@@ -116,9 +116,11 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   const RECOVERY_COOLDOWN = 30000; // Don't attempt recovery more than once every 30 seconds
   let errorsDuringCooldown = 0; // Track errors that occur during cooldown
   const MAX_ERRORS_DURING_COOLDOWN = 5; // Force recovery if too many errors during cooldown
+  const COOLDOWN_LOG_INTERVAL = 5000; // Emit max one cooldown log per source every 5 seconds
   const MAC_ERROR_DEDUP_WINDOW = 1500; // Avoid double-counting same Bad MAC signal from multiple event paths
   let lastMacErrorSignature = null;
   let lastMacErrorSignatureTime = 0;
+  const cooldownLogState = new Map();
 
   const BAD_MAC_CATEGORY_PATTERNS = [
     {
@@ -161,6 +163,41 @@ export async function createBaileysClient(clientId = 'wa-admin') {
       errorCoreText: 'bad mac',
     };
   };
+
+  const getCooldownLogState = (source) => {
+    if (!cooldownLogState.has(source)) {
+      cooldownLogState.set(source, {
+        lastLogAt: 0,
+        suppressedCount: 0,
+      });
+    }
+
+    return cooldownLogState.get(source);
+  };
+
+  const emitSuppressedCooldownSummary = (source, state) => {
+    if (!state || state.suppressedCount <= 0) {
+      return;
+    }
+
+    console.warn(
+      `[BAILEYS] Suppressed ${state.suppressedCount} duplicate Bad MAC cooldown logs in last ${Math.round(
+        COOLDOWN_LOG_INTERVAL / 1000
+      )}s (source=${source})`
+    );
+    state.suppressedCount = 0;
+  };
+
+  const flushCooldownSuppressionSummary = () => {
+    for (const [source, state] of cooldownLogState.entries()) {
+      emitSuppressedCooldownSummary(source, state);
+    }
+  };
+
+  const cooldownSummaryInterval = setInterval(flushCooldownSuppressionSummary, COOLDOWN_LOG_INTERVAL);
+  if (typeof cooldownSummaryInterval.unref === 'function') {
+    cooldownSummaryInterval.unref();
+  }
 
   const readSessionLock = async () => {
     try {
@@ -317,14 +354,31 @@ export async function createBaileysClient(clientId = 'wa-admin') {
       
       // If too many errors during cooldown, force recovery anyway
       if (errorsDuringCooldown >= MAX_ERRORS_DURING_COOLDOWN) {
+        flushCooldownSuppressionSummary();
+        const cooldownElapsedMs = Math.max(0, timeSinceLastRecovery);
+        const cooldownRemainingMs = Math.max(0, RECOVERY_COOLDOWN - timeSinceLastRecovery);
+        console.error(
+          `[BAILEYS] Forced recovery summary: ${errorsDuringCooldown} errors during cooldown (elapsed=${Math.round(
+            cooldownElapsedMs / 1000
+          )}s, remaining=${Math.round(cooldownRemainingMs / 1000)}s, triggerSource=${source})`
+        );
         console.error(
           `[BAILEYS] CRITICAL: ${errorsDuringCooldown} Bad MAC errors during cooldown period - forcing immediate recovery`
         );
         // Don't return - continue to recovery logic below
       } else {
-        console.warn(
-          `[BAILEYS] Bad MAC error detected during recovery cooldown (${Math.round((RECOVERY_COOLDOWN - timeSinceLastRecovery)/1000)}s remaining, error ${errorsDuringCooldown}/${MAX_ERRORS_DURING_COOLDOWN})`
-        );
+        const sourceCooldownState = getCooldownLogState(source);
+        const canLogCooldown = now - sourceCooldownState.lastLogAt >= COOLDOWN_LOG_INTERVAL;
+
+        if (canLogCooldown) {
+          emitSuppressedCooldownSummary(source, sourceCooldownState);
+          console.warn(
+            `[BAILEYS] Bad MAC error detected during recovery cooldown (${Math.round((RECOVERY_COOLDOWN - timeSinceLastRecovery)/1000)}s remaining, error ${errorsDuringCooldown}/${MAX_ERRORS_DURING_COOLDOWN}, source=${source})`
+          );
+          sourceCooldownState.lastLogAt = now;
+        } else {
+          sourceCooldownState.suppressedCount++;
+        }
         return;
       }
     } else {
@@ -990,6 +1044,8 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   emitter.fatalInitError = null;
 
   const shutdownHandler = () => {
+    clearInterval(cooldownSummaryInterval);
+    flushCooldownSuppressionSummary();
     releaseSessionLock().catch((err) => {
       console.warn('[BAILEYS] Failed to release session lock during shutdown:', err?.message || err);
     });
@@ -1001,6 +1057,8 @@ export async function createBaileysClient(clientId = 'wa-admin') {
 
   const originalDisconnect = emitter.disconnect;
   emitter.disconnect = async () => {
+    clearInterval(cooldownSummaryInterval);
+    flushCooldownSuppressionSummary();
     await originalDisconnect();
     for (const signal of SHUTDOWN_SIGNALS) {
       process.off(signal, shutdownHandler);
