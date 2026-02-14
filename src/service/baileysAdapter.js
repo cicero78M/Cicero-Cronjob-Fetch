@@ -42,6 +42,10 @@ function shouldClearAuthSession() {
   return process.env.WA_AUTH_CLEAR_SESSION_ON_REINIT === 'true';
 }
 
+function shouldStrictSingleOwner() {
+  return process.env.WA_BAILEYS_STRICT_SINGLE_OWNER === 'true';
+}
+
 function isProcessRunning(pid) {
   if (!pid || pid === process.pid) {
     return false;
@@ -66,6 +70,20 @@ function buildSessionLockGuardMessage({ clientId, sessionPath, lockPath, lockMet
   );
 }
 
+function emitSessionLockFatalLog({ clientId, sessionPath, lockPath, lockMetadata }) {
+  const ownerClientId = lockMetadata?.clientId || 'unknown';
+  const ownerPid = lockMetadata?.pid || 'unknown';
+  const ownerHostname = lockMetadata?.hostname || 'unknown';
+  const ownerStartedAt = lockMetadata?.startedAt || 'unknown';
+
+  console.error(
+    `[BAILEYS][FATAL] WA_BAILEYS_SHARED_SESSION_LOCK detected for clientId=${clientId}. ` +
+      `Lock owner: clientId=${ownerClientId}, pid=${ownerPid}, hostname=${ownerHostname}, startedAt=${ownerStartedAt}. ` +
+      `Session path: ${sessionPath} (lock file: ${lockPath}). ` +
+      'Operational action: pastikan hanya 1 owner per clientId.'
+  );
+}
+
 /**
  * Create a Baileys WhatsApp client
  * @param {string} clientId - Unique identifier for the client
@@ -79,6 +97,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   const sessionPath = path.join(authBasePath, clientId);
   const sessionLockPath = path.join(sessionPath, SESSION_LOCK_FILE_NAME);
   const clearAuthSession = shouldClearAuthSession();
+  const strictSingleOwner = shouldStrictSingleOwner();
 
   // Create auth directory if it doesn't exist
   // Ensure the full path is created recursively and verify it's writable
@@ -264,6 +283,12 @@ export async function createBaileysClient(clientId = 'wa-admin') {
     }
 
     if (existingLock?.pid && isProcessRunning(existingLock.pid)) {
+      emitSessionLockFatalLog({
+        clientId,
+        sessionPath,
+        lockPath: sessionLockPath,
+        lockMetadata: existingLock,
+      });
       const lockError = new Error(
         buildSessionLockGuardMessage({
           clientId,
@@ -712,6 +737,20 @@ export async function createBaileysClient(clientId = 'wa-admin') {
         
       } catch (error) {
         console.error(`[BAILEYS] Connection error for clientId=${clientId}:`, error.message);
+        if (error?.code === 'WA_BAILEYS_SHARED_SESSION_LOCK') {
+          const lockOwnerPid = error?.ownerPid || 'unknown';
+          console.error(
+            `[BAILEYS] Lock conflict detail for clientId=${clientId}: ownerPid=${lockOwnerPid}, ` +
+              `sessionPath=${sessionPath}, lockPath=${sessionLockPath}.`
+          );
+
+          if (strictSingleOwner) {
+            console.error(
+              '[BAILEYS][FATAL] WA_BAILEYS_STRICT_SINGLE_OWNER=true, exiting process to enforce single owner policy.'
+            );
+            process.exit(1);
+          }
+        }
         emitter.fatalInitError = {
           message: error.message,
           timestamp: Date.now(),

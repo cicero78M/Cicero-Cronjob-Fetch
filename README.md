@@ -118,6 +118,13 @@ Setiap perubahan fungsi/module **wajib** mengaudit dan memperbarui dokumentasi t
 - dokumen `docs/wa_*.md` yang relevan
 - `docs/notification_schedule_source_of_truth.md` jika jadwal/flow berubah
 
+
+### PM2 Deploy Checklist (Baileys Session Ownership)
+
+- [ ] Jangan jalankan lebih dari satu process untuk `clientId` yang sama.
+- [ ] Jangan share auth path antar service tanpa ownership yang jelas (`WA_AUTH_DATA_PATH` + `clientId` harus punya owner tunggal).
+- [ ] Opsional fail-fast: set `WA_BAILEYS_STRICT_SINGLE_OWNER=true` agar process exit saat lock conflict `WA_BAILEYS_SHARED_SESSION_LOCK`.
+
 ## Database Schema
 
 The application uses the following main tables:

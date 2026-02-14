@@ -203,6 +203,19 @@ If Bad MAC errors continue after recovery:
    - Ensure only one instance uses the same session directory
    - Multiple instances sharing sessions will cause key conflicts
 
+### Runbook Singkat: Bad MAC Persisten
+
+Jika error `Bad MAC` tetap muncul setelah recovery otomatis, jalankan urutan ini:
+
+1. **Cek lock owner sesi Baileys**
+   - Cari log `WA_BAILEYS_SHARED_SESSION_LOCK` dan identifikasi owner lock (`clientId`, `pid`, `hostname`, `startedAt`, `sessionPath`).
+2. **Cek jumlah instance aktif**
+   - Verifikasi PM2 tidak menjalankan lebih dari satu process untuk `clientId` yang sama (`pm2 list`, `pm2 show <app>`).
+3. **Validasi ownership auth path**
+   - Pastikan folder auth (`WA_AUTH_DATA_PATH/<clientId>`) tidak dipakai service lain tanpa owner tunggal yang jelas.
+4. **Re-pair bila perlu**
+   - Stop owner yang bermasalah, backup/hapus folder sesi client terkait, start ulang, lalu scan QR ulang jika diminta.
+
 ### Manual Recovery
 
 If automatic recovery fails, manually clear the session:
@@ -222,8 +235,8 @@ pm2 start cicero_v2
 
 ### Checklist verifikasi deploy
 
-- [ ] Verifikasi instance PM2 tidak duplikat untuk sesi yang sama (`pm2 list`, cek nama app/proses clone/duplicate).
-- [ ] Verifikasi path auth writable oleh user runtime dan tidak dishare antar app (`WA_AUTH_DATA_PATH` unik, permission benar).
+- [ ] Verifikasi instance PM2 tidak duplikat untuk `clientId` yang sama (`pm2 list`, cek nama app/proses clone/duplicate).
+- [ ] Verifikasi path auth writable oleh user runtime dan tidak dishare antar service tanpa ownership yang jelas (`WA_AUTH_DATA_PATH` unik, permission benar).
 - [ ] Jika Bad MAC persisten, lakukan clear session aman: stop instance terkait → backup/hapus folder sesi untuk client tersebut saja → start ulang → relink QR bila diminta.
 
 ### Prevent Bad MAC Errors
