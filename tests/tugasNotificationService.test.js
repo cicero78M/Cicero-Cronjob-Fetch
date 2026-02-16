@@ -473,4 +473,33 @@ describe('enqueueTugasNotification', () => {
       }),
     ]);
   });
+
+
+  it('enqueues deletion notice with deleted links and latest task list update', async () => {
+    enqueueOutboxEvents.mockResolvedValue({ insertedCount: 2, duplicatedCount: 0 });
+    getPostsTodayByClientInsta.mockResolvedValue([
+      { shortcode: 'latest1', caption: 'Latest post' },
+    ]);
+    getPostsTodayByClientTiktok.mockResolvedValue([]);
+
+    const result = await enqueueTugasNotification('TEST_CLIENT', {
+      igAdded: [],
+      tiktokAdded: [],
+      igDeleted: 1,
+      tiktokDeleted: 0,
+      igDeletedPosts: ['https://www.instagram.com/p/abc123/'],
+      linkChanges: [],
+    });
+
+    expect(result).toEqual({ enqueuedCount: 2, duplicatedCount: 0 });
+    expect(enqueueOutboxEvents).toHaveBeenCalled();
+
+    const payload = enqueueOutboxEvents.mock.calls.at(-1)[0];
+    expect(payload).toHaveLength(2);
+    expect(payload[0].message).toContain('🗑️ *Perubahan Tugas - Test Client*');
+    expect(payload[0].message).toContain('Link konten Instagram yang dihapus:');
+    expect(payload[0].message).toContain('https://www.instagram.com/p/abc123/');
+    expect(payload[1].message).toContain('📋 *Daftar Tugas - Test Client*');
+    expect(payload[1].message).toContain('Status tugas saat ini:');
+  });
 });

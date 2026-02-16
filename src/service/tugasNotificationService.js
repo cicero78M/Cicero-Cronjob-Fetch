@@ -157,7 +157,12 @@ function formatTiktokPostAdditions(posts, clientName) {
  * @returns {string} Formatted message
  */
 function formatPostDeletions(changes, clientName) {
-  const { igDeleted = 0, tiktokDeleted = 0 } = changes;
+  const {
+    igDeleted = 0,
+    tiktokDeleted = 0,
+    igDeletedPosts = [],
+    tiktokDeletedPosts = [],
+  } = changes;
   
   if (igDeleted === 0 && tiktokDeleted === 0) return '';
   
@@ -168,14 +173,29 @@ function formatPostDeletions(changes, clientName) {
 
   if (igDeleted > 0) {
     lines.push(`📸 *${igDeleted}* konten Instagram telah dihapus dari daftar tugas.`);
+
+    if (igDeletedPosts.length > 0) {
+      lines.push('Link konten Instagram yang dihapus:');
+      igDeletedPosts.forEach((link, index) => {
+        lines.push(`${index + 1}. ${link}`);
+      });
+    }
   }
   
   if (tiktokDeleted > 0) {
     lines.push(`🎵 *${tiktokDeleted}* konten TikTok telah dihapus dari daftar tugas.`);
+
+    if (tiktokDeletedPosts.length > 0) {
+      lines.push('Link konten TikTok yang dihapus:');
+      tiktokDeletedPosts.forEach((link, index) => {
+        lines.push(`${index + 1}. ${link}`);
+      });
+    }
   }
 
   lines.push('');
   lines.push('_Tugas yang dihapus tidak perlu dikerjakan lagi._');
+  lines.push('_Berikutnya silakan cek update daftar tugas terbaru._');
   
   return lines.join('\n');
 }
@@ -641,6 +661,9 @@ export async function buildTugasNotificationPayload(clientId, changes, options =
     if (changes.igDeleted > 0 || changes.tiktokDeleted > 0) {
       const msg = formatPostDeletions(changes, clientName);
       if (msg) messages.push(msg);
+
+      const latestTaskList = await formatScheduledTaskList(clientName, changes, clientId);
+      if (latestTaskList) messages.push(latestTaskList);
     }
 
     if (changes.linkChanges && changes.linkChanges.length > 0) {
