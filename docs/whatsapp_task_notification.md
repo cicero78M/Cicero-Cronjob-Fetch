@@ -22,6 +22,13 @@ Pesan dikirim dalam format Indonesia dengan markdown WhatsApp:
 - Daftar konten dengan detail (shortcode/video_id, caption/deskripsi, link)
 - Instruksi tindak lanjut
 
+Untuk notifikasi **penghapusan konten**, pesan kini memuat:
+- Daftar link konten yang dihapus (jika link tersedia di payload perubahan)
+- Pengingat bahwa tugas yang dihapus tidak perlu dikerjakan
+- Tindak lanjut agar operator mengecek update daftar tugas terbaru
+
+Setelah notifikasi penghapusan dikirim, sistem juga mengirim **update daftar tugas terbaru** (`📋 Daftar Tugas`) agar penerima langsung mendapatkan snapshot tugas terkini.
+
 Untuk **notifikasi terjadwal daftar tugas**, setiap item konten kini juga memuat metadata engagement:
 - `Upload: <hari>, <tanggal> <jam:menit> WIB` (zona waktu Asia/Jakarta)
 - `Likes: <angka format id-ID> | Komentar: <angka format id-ID>`
