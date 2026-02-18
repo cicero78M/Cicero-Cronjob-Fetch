@@ -138,6 +138,7 @@ Example:
 - **noUsernameUsersDetails** – daftar akun yang perlu dibantu melengkapi username TikTok.
 - **regional_id** – atribut regional dari client yang ditampilkan untuk setiap user.
 - **usersWithComments / usersWithoutComments** – field lama yang tetap disediakan untuk kompatibilitas klien.
+- **Sumber aktivitas komentar TikTok** – perhitungan `jumlah_komentar` kini memasukkan parent comment dan seluruh reply bertingkat (contoh properti `replies`, `reply_comment`, `reply_comments`) pada pipeline fetch. Username dari seluruh thread dideduplikasi sebelum disimpan, sehingga user yang hanya aktif di reply tetap terhitung pada rekap API dan turunan Excel.
 
 **Catatan operator:** saat endpoint ini dipakai untuk menu *Absensi Komentar TikTok* di WhatsApp, mode akumulasi menampilkan grouping per satfung dengan sub-list **lengkap/kurang/belum**. Urutan personel di dalam list mengikuti prioritas pangkat berikut: AKP (jabatan Kasat didahulukan), IPTU, IPDA, AIPTU, AIPDA, BRIPKA, BRIGADIR, BRIPTU, BRIPDA, PENATA, PENGATUR TINGKAT I, PENGATUR MUDA TINGKAT I, PENGATUR, JURU, PPPK, PHL.
 

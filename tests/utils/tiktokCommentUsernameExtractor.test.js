@@ -39,6 +39,28 @@ describe('tiktokCommentUsernameExtractor', () => {
     );
   });
 
+
+  test('extractUsernamesFromCommentTree supports reply_comment and reply_comments object nodes', () => {
+    const comments = [
+      {
+        user: { unique_id: 'ParentUser' },
+        reply_comment: {
+          user: { unique_id: 'ChildReply' },
+          reply_comments: [
+            { user: { uniqueId: 'GrandChildReply' } },
+            { user: { unique_id: 'ParentUser' } },
+          ],
+        },
+      },
+    ];
+
+    expect(extractUsernamesFromCommentTree(comments)).toEqual([
+      '@parentuser',
+      '@childreply',
+      '@grandchildreply',
+    ]);
+  });
+
   test('normalizeTiktokCommentUsername keeps lowercase and @ prefix', () => {
     expect(normalizeTiktokCommentUsername('  ExampleUser  ')).toBe('@exampleuser');
     expect(normalizeTiktokCommentUsername('@AnotherUser')).toBe('@anotheruser');

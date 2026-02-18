@@ -53,3 +53,28 @@ test('handler retries fetching comments before failing', async () => {
   expect(mockFetchAll).toHaveBeenCalledTimes(2);
   expect(mockSendDebug).toHaveBeenCalledWith(expect.objectContaining({ tag: 'TTK COMMENT RETRY' }));
 });
+
+test('handler includes usernames from nested replies and deduplicates before upsert', async () => {
+  mockQuery
+    .mockResolvedValueOnce({ rows: [{ video_id: 'vid3' }] })
+    .mockResolvedValueOnce({ rows: [] })
+    .mockResolvedValueOnce({ rows: [] })
+    .mockResolvedValueOnce({ rows: [] });
+
+  mockFetchAll.mockResolvedValueOnce([
+    {
+      user: { unique_id: 'ParentA' },
+      reply_comment: {
+        user: { uniqueId: 'ReplyA' },
+        reply_comments: [{ user: { unique_id: 'ParentA' } }],
+      },
+    },
+  ]);
+
+  await handleFetchKomentarTiktokBatch(null, null, 'POLRES3');
+
+  const upsertCall = mockQuery.mock.calls[3];
+  const saved = JSON.parse(upsertCall[1][1]);
+  expect(saved).toEqual(expect.arrayContaining(['@parenta', '@replya']));
+  expect(saved.filter((uname) => uname === '@parenta')).toHaveLength(1);
+});
