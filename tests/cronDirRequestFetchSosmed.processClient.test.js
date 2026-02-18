@@ -163,3 +163,85 @@ describe('client slot segment helper', () => {
     expect(shouldFetchPostsForClientAtJakartaParts(segmentBClient, { hour: 22, minute: 0 })).toBe(false);
   });
 });
+
+
+describe('processClient notification enqueue behavior', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-01-01T12:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test('does not enqueue outbox when changes are empty', async () => {
+    const schedulerStateByClient = new Map([
+      ['TEST_CLIENT', { clientId: 'TEST_CLIENT', lastIgCount: 10, lastTiktokCount: 4, lastNotifiedAt: null, lastNotifiedSlot: null }],
+    ]);
+
+    mockGetInstaPostCount.mockResolvedValue(10);
+    mockGetTiktokPostCount.mockResolvedValue(4);
+    mockDetectChanges.mockResolvedValue({
+      igAdded: [],
+      tiktokAdded: [],
+      igDeleted: 0,
+      tiktokDeleted: 0,
+      linkChanges: [],
+    });
+    mockHasNotableChanges.mockReturnValue(false);
+
+    await processClient(
+      {
+        client_id: 'TEST_CLIENT',
+        client_type: 'org',
+        client_insta_status: true,
+        client_tiktok_status: true,
+      },
+      {
+        forceEngagementOnly: true,
+        schedulerStateByClient,
+        stateStorageHealthy: true,
+      }
+    );
+
+    expect(mockEnqueueTugasNotification).not.toHaveBeenCalled();
+  });
+
+  test('enqueues outbox when notable changes exist', async () => {
+    const schedulerStateByClient = new Map([
+      ['TEST_CLIENT', { clientId: 'TEST_CLIENT', lastIgCount: 10, lastTiktokCount: 4, lastNotifiedAt: null, lastNotifiedSlot: null }],
+    ]);
+
+    const changes = {
+      igAdded: [{ shortcode: 'abc123' }],
+      tiktokAdded: [],
+      igDeleted: 1,
+      tiktokDeleted: 0,
+      linkChanges: [{ shortcode: 'abc123', user_name: 'Tester' }],
+    };
+
+    mockGetInstaPostCount.mockResolvedValue(11);
+    mockGetTiktokPostCount.mockResolvedValue(4);
+    mockDetectChanges.mockResolvedValue(changes);
+    mockHasNotableChanges.mockReturnValue(true);
+    mockEnqueueTugasNotification.mockResolvedValue({ enqueuedCount: 1, duplicatedCount: 0 });
+
+    await processClient(
+      {
+        client_id: 'TEST_CLIENT',
+        client_type: 'org',
+        client_insta_status: true,
+        client_tiktok_status: true,
+      },
+      {
+        forceEngagementOnly: true,
+        schedulerStateByClient,
+        stateStorageHealthy: true,
+      }
+    );
+
+    expect(mockEnqueueTugasNotification).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueTugasNotification).toHaveBeenCalledWith('TEST_CLIENT', changes);
+  });
+});

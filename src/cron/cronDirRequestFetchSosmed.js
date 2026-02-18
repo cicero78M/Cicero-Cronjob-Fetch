@@ -29,7 +29,6 @@ const DEADLINE_INTAKE_BUFFER_MS = 20 * 1000;
 let isFetchInFlight = false;
 
 const JAKARTA_TIMEZONE = "Asia/Jakarta";
-const HOURLY_SLOT_ANCHOR_MINUTE = 5;
 
 function normalizeClientId(clientId) {
   return String(clientId || "").trim().toUpperCase();
@@ -53,7 +52,7 @@ function buildFallbackState(clientId) {
 }
 
 /**
- * Build Jakarta time parts so we can generate deterministic slot keys
+ * Build Jakarta time parts to ensure deterministic runtime slot checks
  * regardless of server timezone.
  * @param {Date} date
  * @returns {{year: number, month: number, day: number, hour: number, minute: number}}
@@ -82,46 +81,6 @@ function getJakartaTimeParts(date = new Date()) {
     hour: Number(partMap.hour),
     minute: Number(partMap.minute),
   };
-}
-
-/**
- * Round the current Jakarta time into a fixed hourly slot key.
- * All runs in the same hour map to one key so hourly notification stays global.
- *
- * Example:
- * - 06:05 WIB => 2026-02-13-06@05
- * - 06:30 WIB => 2026-02-13-06@05
- * - 06:03 WIB => 2026-02-13-05@05 (previous hour slot)
- *
- * @param {Date} date
- * @returns {string}
- */
-function buildJakartaHourlySlotKey(date = new Date()) {
-  const parts = getJakartaTimeParts(date);
-  let slotHour = parts.hour;
-
-  if (parts.minute < HOURLY_SLOT_ANCHOR_MINUTE) {
-    slotHour -= 1;
-  }
-
-  if (slotHour < 0) {
-    slotHour = 23;
-    const rolloverDate = new Date(date.getTime() - (24 * 60 * 60 * 1000));
-    const rolloverParts = getJakartaTimeParts(rolloverDate);
-    return `${rolloverParts.year}-${String(rolloverParts.month).padStart(2, "0")}-${String(rolloverParts.day).padStart(2, "0")}-${String(slotHour).padStart(2, "0")}@${String(HOURLY_SLOT_ANCHOR_MINUTE).padStart(2, "0")}`;
-  }
-
-  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}-${String(slotHour).padStart(2, "0")}@${String(HOURLY_SLOT_ANCHOR_MINUTE).padStart(2, "0")}`;
-}
-
-/**
- * Check if we should send hourly notification for the current fixed slot
- * @param {object} schedulerState - scheduler state for client
- * @param {string} currentSlotKey - slot key of current run
- * @returns {boolean} True if current slot has never been sent
- */
-function shouldSendHourlyNotification(schedulerState, currentSlotKey) {
-  return schedulerState?.lastNotifiedSlot !== currentSlotKey;
 }
 
 function logMessage(phase, clientId, action, result, countsBefore, countsAfter, message = "", meta = {}) {
@@ -157,13 +116,13 @@ function resolveCountsBefore(schedulerState, countsAfter, storageHealthy) {
   };
 }
 
-function buildNextSchedulerState(schedulerState, countsAfter, notificationSent, currentSlotKey) {
+function buildNextSchedulerState(schedulerState, countsAfter) {
   return {
     clientId: schedulerState.clientId,
     lastIgCount: countsAfter.ig,
     lastTiktokCount: countsAfter.tiktok,
-    lastNotifiedAt: notificationSent ? new Date().toISOString() : toIsoOrNull(schedulerState.lastNotifiedAt),
-    lastNotifiedSlot: notificationSent ? currentSlotKey : (schedulerState.lastNotifiedSlot || null),
+    lastNotifiedAt: toIsoOrNull(schedulerState.lastNotifiedAt),
+    lastNotifiedSlot: schedulerState.lastNotifiedSlot || null,
   };
 }
 
@@ -221,18 +180,6 @@ export function shouldFetchPostsForClient(client, date = new Date()) {
   return shouldFetchPostsForClientAtJakartaParts(client, getJakartaTimeParts(date));
 }
 
-/**
- * Determine if we should send hourly notifications based on current time
- * Notifications align with post fetch period including mandatory 17:05 slot.
- * @returns {boolean} True if within notification time (06:00-17:59 WIB)
- */
-function shouldSendHourlyNotifications() {
-  const jakartaHour = getJakartaTimeParts(new Date()).hour;
-
-  // Check if hour is between 6 and 22 WIB.
-  return jakartaHour >= 6 && jakartaHour <= 22;
-}
-
 export async function processClient(client, options = {}) {
   const {
     forceEngagementOnly,
@@ -245,7 +192,6 @@ export async function processClient(client, options = {}) {
   const hasTiktok = client?.client_tiktok_status !== false;
   const skipPostFetch = forceEngagementOnly || !shouldFetchPostsForClient(client);
   const schedulerState = schedulerStateByClient.get(clientId) || buildFallbackState(clientId);
-  const currentSlotKey = buildJakartaHourlySlotKey(new Date());
 
   // Fetch Instagram posts
   if (!skipPostFetch && hasInstagram) {
@@ -315,52 +261,23 @@ export async function processClient(client, options = {}) {
   logMessage("fetchComplete", clientId, "fetchComplete", "completed", countsBefore, countsAfter,
     "Social media fetch completed successfully");
 
-  // Check if it's time for hourly notification (during post fetch period, last run 17:05)
-  const isNotificationTime = shouldSendHourlyNotifications();
-  const shouldSendHourly = isNotificationTime && shouldSendHourlyNotification(schedulerState, currentSlotKey);
   const hasChanges = hasNotableChanges(changes);
-  let notificationSent = false;
-
-  const hourlyReason = !isNotificationTime
-    ? "outside hourly notification window"
-    : shouldSendHourly
-      ? "new hourly slot"
-      : "slot already notified";
-
-  logMessage("waNotification", clientId, "hourlySlotEvaluation", "completed", countsBefore, countsAfter,
-    `Hourly slot decision`, {
-      currentSlotKey,
-      lastNotifiedSlot: schedulerState.lastNotifiedSlot || null,
-      isNotificationTime,
-      shouldSendHourly,
-      hourlyReason,
-      hasChanges,
-    });
-
-  // conservative fallback if state storage unavailable: don't do hourly-only sends
-  const shouldNotify = stateStorageHealthy ? (hasChanges || shouldSendHourly) : hasChanges;
+  const shouldNotify = hasChanges;
 
   if (shouldNotify) {
     const changeSummary = buildChangeSummary(changes);
-    const notificationReason = shouldSendHourly
-      ? `Hourly notification (${hasChanges ? 'with changes: ' + changeSummary : 'no changes'})`
-      : `Changes detected: ${changeSummary}`;
+    const notificationReason = `Changes detected: ${changeSummary}`;
 
     logMessage("waNotification", clientId, "sendNotification", "start", countsBefore, countsAfter,
       `Sending WA notification: ${notificationReason}`);
 
     try {
-      const notificationOptions = {
-        forceScheduled: shouldSendHourly,
-      };
-
       const enqueueResult = await enqueueTugasNotification(
         clientId,
-        changes,
-        notificationOptions
+        changes
       );
 
-      notificationSent = enqueueResult.enqueuedCount > 0;
+      const notificationSent = enqueueResult.enqueuedCount > 0;
 
       if (notificationSent) {
         logMessage("waNotification", clientId, "enqueueNotification", "completed", countsBefore, countsAfter,
@@ -382,12 +299,10 @@ export async function processClient(client, options = {}) {
     }
   } else {
     logMessage("waNotification", clientId, "sendNotification", "skipped", countsBefore, countsAfter,
-      stateStorageHealthy
-        ? "No notable changes detected and not time for hourly notification"
-        : "State storage unavailable, hourly notifications disabled (conservative mode)");
+      "No notable changes detected");
   }
 
-  const nextSchedulerState = buildNextSchedulerState(schedulerState, countsAfter, notificationSent, currentSlotKey);
+  const nextSchedulerState = buildNextSchedulerState(schedulerState, countsAfter);
   if (stateStorageHealthy) {
     try {
       const persistedState = await upsertSchedulerState(nextSchedulerState);
