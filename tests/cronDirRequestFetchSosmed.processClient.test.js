@@ -69,9 +69,16 @@ jest.unstable_mockModule('../src/model/waNotificationReminderStateModel.js', () 
 
 let processClient;
 let shouldFetchPostsForClient;
+let shouldFetchPostsForClientAtJakartaParts;
+let resolveClientFetchSegment;
 
 beforeAll(async () => {
-  ({ processClient, shouldFetchPostsForClient } = await import('../src/cron/cronDirRequestFetchSosmed.js'));
+  ({
+    processClient,
+    shouldFetchPostsForClient,
+    shouldFetchPostsForClientAtJakartaParts,
+    resolveClientFetchSegment,
+  } = await import('../src/cron/cronDirRequestFetchSosmed.js'));
 });
 
 beforeEach(() => {
@@ -86,6 +93,9 @@ beforeEach(() => {
 });
 
 test('does not refresh TikTok comments when client_tiktok_status is false', async () => {
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date('2026-01-01T12:00:00.000Z')); // 19:00 WIB (valid slot)
+
   const schedulerStateByClient = new Map([
     ['DITBINMAS', { clientId: 'DITBINMAS', lastIgCount: 0, lastTiktokCount: 0, lastNotifiedAt: null, lastNotifiedSlot: null }],
   ]);
@@ -106,29 +116,50 @@ test('does not refresh TikTok comments when client_tiktok_status is false', asyn
   expect(mockFetchKomentarTiktokBatch).not.toHaveBeenCalled();
   expect(mockFetchInsta).toHaveBeenCalled();
   expect(mockFetchLikes).toHaveBeenCalled();
+
+  jest.useRealTimers();
 });
 
 
 describe('shouldFetchPostsForClient', () => {
-  test('org and ditbinmas clients fetch posts until 20:59 WIB', () => {
+  test('segment A clients (org/ditbinmas) stop at final slot 20:58 WIB', () => {
     const orgClient = { client_id: 'POLRESTA', client_type: 'org' };
     const ditbinmasClient = { client_id: 'DITBINMAS', client_type: 'direktorat' };
 
-    expect(shouldFetchPostsForClient(orgClient, new Date('2026-01-01T13:00:00.000Z'))).toBe(true); // 20:00 WIB
+    expect(shouldFetchPostsForClient(orgClient, new Date('2026-01-01T13:58:00.000Z'))).toBe(true); // 20:58 WIB
     expect(shouldFetchPostsForClient(orgClient, new Date('2026-01-01T14:00:00.000Z'))).toBe(false); // 21:00 WIB
 
-    expect(shouldFetchPostsForClient(ditbinmasClient, new Date('2026-01-01T13:00:00.000Z'))).toBe(true); // 20:00 WIB
+    expect(shouldFetchPostsForClient(ditbinmasClient, new Date('2026-01-01T13:58:00.000Z'))).toBe(true); // 20:58 WIB
     expect(shouldFetchPostsForClient(ditbinmasClient, new Date('2026-01-01T14:00:00.000Z'))).toBe(false); // 21:00 WIB
   });
 
-  test('bidhumas and ditintelkam clients fetch posts until 22:59 WIB', () => {
+  test('segment B clients (direktorat except ditbinmas) stop at final slot 21:58 WIB', () => {
     const bidhumasClient = { client_id: 'BIDHUMAS', client_type: 'direktorat' };
-    const ditintelkamClient = { client_id: 'DITINTELKAM', client_type: 'direktorat' };
+    const ditreskrimClient = { client_id: 'DITRESKRIM', client_type: 'direktorat' };
 
-    expect(shouldFetchPostsForClient(bidhumasClient, new Date('2026-01-01T15:00:00.000Z'))).toBe(true); // 22:00 WIB
-    expect(shouldFetchPostsForClient(bidhumasClient, new Date('2026-01-01T16:00:00.000Z'))).toBe(false); // 23:00 WIB
+    expect(shouldFetchPostsForClient(bidhumasClient, new Date('2026-01-01T14:58:00.000Z'))).toBe(true); // 21:58 WIB
+    expect(shouldFetchPostsForClient(bidhumasClient, new Date('2026-01-01T15:00:00.000Z'))).toBe(false); // 22:00 WIB
 
-    expect(shouldFetchPostsForClient(ditintelkamClient, new Date('2026-01-01T15:00:00.000Z'))).toBe(true); // 22:00 WIB
-    expect(shouldFetchPostsForClient(ditintelkamClient, new Date('2026-01-01T16:00:00.000Z'))).toBe(false); // 23:00 WIB
+    expect(shouldFetchPostsForClient(ditreskrimClient, new Date('2026-01-01T14:58:00.000Z'))).toBe(true); // 21:58 WIB
+    expect(shouldFetchPostsForClient(ditreskrimClient, new Date('2026-01-01T15:00:00.000Z'))).toBe(false); // 22:00 WIB
+  });
+});
+
+describe('client slot segment helper', () => {
+  test('resolveClientFetchSegment maps clients to expected segments', () => {
+    expect(resolveClientFetchSegment({ client_id: 'DITBINMAS', client_type: 'direktorat' })).toBe('segmentA');
+    expect(resolveClientFetchSegment({ client_id: 'POLRESTA', client_type: 'org' })).toBe('segmentA');
+    expect(resolveClientFetchSegment({ client_id: 'BIDHUMAS', client_type: 'direktorat' })).toBe('segmentB');
+  });
+
+  test('shouldFetchPostsForClientAtJakartaParts validates boundary slots', () => {
+    const segmentAClient = { client_id: 'DITBINMAS', client_type: 'direktorat' };
+    const segmentBClient = { client_id: 'BIDHUMAS', client_type: 'direktorat' };
+
+    expect(shouldFetchPostsForClientAtJakartaParts(segmentAClient, { hour: 20, minute: 58 })).toBe(true);
+    expect(shouldFetchPostsForClientAtJakartaParts(segmentAClient, { hour: 21, minute: 0 })).toBe(false);
+
+    expect(shouldFetchPostsForClientAtJakartaParts(segmentBClient, { hour: 21, minute: 58 })).toBe(true);
+    expect(shouldFetchPostsForClientAtJakartaParts(segmentBClient, { hour: 22, minute: 0 })).toBe(false);
   });
 });

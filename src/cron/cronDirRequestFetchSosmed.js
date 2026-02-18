@@ -167,21 +167,50 @@ function buildNextSchedulerState(schedulerState, countsAfter, notificationSent, 
   };
 }
 
-const EXTENDED_FETCH_UNTIL_22_CLIENT_IDS = new Set(["bidhumas", "ditintelkam", "diitintelkam"]);
+const CLIENT_FETCH_SEGMENTS = Object.freeze({
+  segmentA: "segmentA",
+  segmentB: "segmentB",
+});
 
-function resolvePostFetchEndHour(client) {
+export function resolveClientFetchSegment(client) {
   const clientId = normalizeClientId(client?.client_id).toLowerCase();
   const clientType = String(client?.client_type || "").trim().toLowerCase();
 
   if (clientType === "org" || clientId === "ditbinmas") {
-    return 20;
+    return CLIENT_FETCH_SEGMENTS.segmentA;
   }
 
-  if (EXTENDED_FETCH_UNTIL_22_CLIENT_IDS.has(clientId)) {
-    return 22;
+  if (clientType === "direktorat" && clientId !== "ditbinmas") {
+    return CLIENT_FETCH_SEGMENTS.segmentB;
   }
 
-  return 20;
+  return CLIENT_FETCH_SEGMENTS.segmentA;
+}
+
+/**
+ * Pure slot validator for Jakarta hour+minute.
+ * Segment A: 06:00-20:30 plus final 20:58 slot.
+ * Segment B: 06:00-21:30 plus final 21:58 slot.
+ * @param {object} client
+ * @param {{hour:number, minute:number}} jakartaParts
+ * @returns {boolean}
+ */
+export function shouldFetchPostsForClientAtJakartaParts(client, jakartaParts) {
+  const { hour, minute } = jakartaParts || {};
+  const isExactHalfHourSlot = minute === 0 || minute === 30;
+  const clientSegment = resolveClientFetchSegment(client);
+
+  if (hour < 6) return false;
+
+  if (clientSegment === CLIENT_FETCH_SEGMENTS.segmentA) {
+    if (hour <= 19 && isExactHalfHourSlot) return true;
+    if (hour === 20 && (isExactHalfHourSlot || minute === 58)) return true;
+    return false;
+  }
+
+  if (hour <= 20 && isExactHalfHourSlot) return true;
+  if (hour === 21 && (isExactHalfHourSlot || minute === 58)) return true;
+  return false;
 }
 
 /**
@@ -189,11 +218,7 @@ function resolvePostFetchEndHour(client) {
  * @returns {boolean} True if it's time to fetch posts for the client.
  */
 export function shouldFetchPostsForClient(client, date = new Date()) {
-  const jakartaHour = getJakartaTimeParts(date).hour;
-  const endHour = resolvePostFetchEndHour(client);
-
-  // Post fetch runs from 06:00 WIB until the configured end hour per client.
-  return jakartaHour >= 6 && jakartaHour <= endHour;
+  return shouldFetchPostsForClientAtJakartaParts(client, getJakartaTimeParts(date));
 }
 
 /**
@@ -234,7 +259,9 @@ export async function processClient(client, options = {}) {
     logMessage("instagramFetch", clientId, "fetchInstagram", "completed", null, null);
   } else {
     logMessage("instagramFetch", clientId, "fetchInstagram", "skipped", null, null,
-      !hasInstagram ? "Instagram account inactive" : "forceEngagementOnly=true");
+      !hasInstagram
+        ? "Instagram account inactive"
+        : (forceEngagementOnly ? "forceEngagementOnly=true" : "outside post-fetch slot for client segment"));
   }
 
   // Fetch TikTok posts
@@ -244,7 +271,9 @@ export async function processClient(client, options = {}) {
     logMessage("tiktokFetch", clientId, "fetchTiktok", "completed", null, null);
   } else {
     logMessage("tiktokFetch", clientId, "fetchTiktok", "skipped", null, null,
-      !hasTiktok ? "TikTok account inactive" : "forceEngagementOnly=true");
+      !hasTiktok
+        ? "TikTok account inactive"
+        : (forceEngagementOnly ? "forceEngagementOnly=true" : "outside post-fetch slot for client segment"));
   }
 
   // Fetch Instagram likes
@@ -424,7 +453,7 @@ export async function runCron(options = {}) {
     // Determine if we should fetch posts based on time
     const timeBasedMessage = forceEngagementOnly
       ? "engagement only period (forced by options)"
-      : "post fetch/engagement period (per-client schedule until 20:00 or 22:00 WIB)";
+      : "post fetch/engagement period (global 06:00-21:30 + final 20:58/21:58 slots; runtime per-client segment gating)";
 
     logMessage("start", null, "cron", "start", null, null, "", {
       forceEngagementOnly,
@@ -543,15 +572,16 @@ export async function runCron(options = {}) {
 
 export const JOB_KEY = "./src/cron/cronDirRequestFetchSosmed.js";
 
-// Unified run every 30 minutes from 06:00-22:30 WIB.
+// Unified run every 30 minutes from 06:00-21:30 WIB + final :58 slot for 20:58 and 21:58.
 // Post-fetch eligibility is decided per client inside shouldFetchPostsForClient().
 const UNIFIED_FETCH_SCHEDULES = [
-  "0,30 6-22 * * *",
+  "0,30 6-21 * * *",
+  "58 20-21 * * *",
 ];
 
 const CRON_OPTIONS = { timezone: "Asia/Jakarta" };
 
-// Schedule unified fetch jobs (06:00 to 22:30)
+// Schedule unified fetch jobs (06:00-21:30 + final 20:58/21:58)
 UNIFIED_FETCH_SCHEDULES.forEach((schedule, index) => {
   scheduleCronJob(
     JOB_KEY + `:unified-fetch-${index}`,
