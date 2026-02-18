@@ -1,5 +1,5 @@
 # Source of Truth: Jadwal Cron & Flow Notifikasi Sosmed
-*Last updated: 2026-02-18*
+*Last updated: 2026-02-19*
 
 Dokumen ini adalah referensi utama untuk jadwal cron dan alur notifikasi pada modul fetch sosmed.
 Jika ada perbedaan dengan dokumen lain, **ikuti dokumen ini + implementasi di `src/cron/cronDirRequestFetchSosmed.js`**.
@@ -25,25 +25,18 @@ Sumber implementasi:
 ## 2) Flow Notifikasi WA
 
 ### Trigger notifikasi
-Notifikasi tugas dikirim jika salah satu kondisi benar:
-1. Ada perubahan signifikan (`hasNotableChanges(changes)`), atau
-2. Slot hourly aktif berdasarkan state (`shouldSendHourlyNotification`) selama window notifikasi hourly (06:00–22:59 WIB).
+Notifikasi tugas hanya dikirim jika ada perubahan signifikan (`hasNotableChanges(changes)`).
 
 ### Behavior stateful
-- Hourly slot: berbasis **slot global Jakarta** dengan key format `YYYY-MM-DD-HH@05`.
-- Slot dihitung dari waktu run Jakarta (`currentSlotKey`) dan dikirim jika berbeda dari state `lastNotifiedSlot` per client.
-- Untuk run sebelum menit 05, slot dibulatkan ke jam sebelumnya agar tetap konsisten dengan anchor schedule.
-- State per client disimpan di tabel state reminder:
+- State scheduler tetap menyimpan baseline count per client:
   - `lastIgCount`
   - `lastTiktokCount`
-  - `lastNotifiedAt`
-  - `lastNotifiedSlot`
-- `lastNotifiedSlot` hanya diupdate saat enqueue WA sukses supaya kegagalan kirim tidak mengunci slot hourly berikutnya.
-- Jika storage state gagal, sistem masuk mode konservatif: notifikasi hanya dikirim saat ada perubahan.
+- State `lastNotifiedAt` dan `lastNotifiedSlot` tidak lagi dipakai untuk keputusan notifikasi hourly.
+- Trigger notifikasi murni berbasis objek perubahan aktual hasil `detectChanges`.
 
 ### Bentuk pesan
-- `forceScheduled=true`: kirim ringkasan tugas terjadwal (tetap kirim walau tidak ada perubahan) saat slot hourly baru belum pernah dinotifikasi di hari/jam tersebut.
-- `forceScheduled=false`: kirim saat ada perubahan.
+- Tidak ada lagi mode `forceScheduled`.
+- Pesan dibangun hanya dari perubahan aktual: `igAdded`, `tiktokAdded`, `igDeleted`, `tiktokDeleted`, dan `linkChanges`.
 
 ## 3) Catatan Penting Kompatibilitas
 
