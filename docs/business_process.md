@@ -23,7 +23,7 @@ This document summarizes the high level business processes of the Cicero platfor
 
 ## 4. Notifications & Reporting
 
-1. Notifikasi tugas dikirim saat ada perubahan penting atau saat slot hourly global Jakarta aktif di window 06:00-22:59 WIB (dibandingkan via `last_notified_slot` per client).
+1. Notifikasi tugas bersifat **change-driven only**: daftar tugas hanya dikirim saat ada perubahan penting pada data post/link (hasil `hasNotableChanges`) dan tidak ada lagi blast hourly berbasis `last_notified_slot`.
 2. Pengiriman log/error operasional tetap melalui WhatsApp admin; `telegramService` dipertahankan sebagai wrapper WA untuk backward compatibility.
 3. Admin juga dapat memicu proses manual tertentu dari command WhatsApp (dirrequest).
 
