@@ -57,6 +57,18 @@ dirrequest tanpa langkah tambahan.
   `insta_like_audit` dan `tiktok_comment_audit`. Kolom yang dicatat mencakup
   `shortcode`/`video_id`, `usernames` (JSONB), `snapshot_window_start`,
   `snapshot_window_end`, dan `captured_at` (default `NOW()`).
+- Fetch komentar TikTok per batch kini dieksekusi dengan model
+  `await Promise.all(videoIds.map((videoId) => limit(async () => ...)))`.
+  Pendekatan ini menjaga batas concurrency (melalui `p-limit`) namun
+  mengizinkan seluruh task video dijadwalkan lebih awal sehingga throughput
+  lebih stabil dibanding loop serial yang menunggu tiap iterasi selesai dulu.
+- Counter sukses/gagal tidak lagi diinkremen langsung di dalam task paralel.
+  Setiap task mengembalikan status (`success`/`failed`) beserta durasi proses,
+  lalu agregasi total dilakukan di akhir batch untuk mencegah race condition
+  saat banyak video diproses bersamaan.
+- Logic retry existing tetap dipertahankan (`MAX_COMMENT_FETCH_ATTEMPTS` dengan
+  delay bertingkat per percobaan), dan log debug sekarang menampilkan durasi
+  ringkas per video agar bottleneck pasca paralelisasi lebih mudah dipantau.
 - Generator pesan tugas sosmed dapat menerima rentang waktu (mis. 30 menit
   terakhir). Jika rentang diberikan, generator lebih dulu membaca snapshot
   terbaru dari tabel audit dan menampilkan label **"Data rentang HH–HH WIB"**.
