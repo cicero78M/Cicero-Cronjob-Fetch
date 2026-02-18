@@ -72,6 +72,7 @@ laporan harian serta menyiapkan narasi yang konsisten.
   bersumber dari klien Ditbinmas **atau** memiliki role Ditbinmas di
   `tiktok_post_roles`. Postingan yang tidak memiliki role tidak ikut dihitung
   sehingga total_konten dan jumlah komentar tidak tercampur dengan satker lain.
+- Aktivitas komentar TikTok kini menghitung akun yang muncul pada parent comment **dan** reply bertingkat (mis. `replies`, `reply_comment`, `reply_comments`) dengan deduplikasi username di level per-video. Dengan ini, ranking rekap/Excel tidak lagi mengabaikan personel yang hanya aktif membalas reply.
 - Filter tanggal memakai zona waktu "Asia/Jakarta" untuk kedua sumber data
   (konten dan komentar). Parameter `tanggal`, `start_date`, atau `end_date`
   akan langsung mengisi filter `created_at`/`updated_at` di query sehingga

@@ -67,23 +67,32 @@ function collectCommentChildren(comment) {
   if (!comment || typeof comment !== "object") return [];
   return COMMENT_CHILDREN_KEYS.flatMap((key) => {
     const value = comment[key];
-    return Array.isArray(value) ? value : [];
+    if (Array.isArray(value)) return value;
+    return value && typeof value === "object" ? [value] : [];
+  });
+}
+
+function collectUsernamesFromCommentThread(comment, usernames) {
+  if (!comment || typeof comment !== "object") return;
+
+  const username = extractUsernameFromComment(comment);
+  if (username) {
+    usernames.push(username);
+  }
+
+  const children = collectCommentChildren(comment);
+  children.forEach((childComment) => {
+    collectUsernamesFromCommentThread(childComment, usernames);
   });
 }
 
 export function extractUsernamesFromCommentTree(comments = []) {
-  const queue = Array.isArray(comments) ? [...comments] : [];
+  const roots = Array.isArray(comments) ? comments : [];
   const usernames = [];
 
-  while (queue.length > 0) {
-    const comment = queue.shift();
-    const username = extractUsernameFromComment(comment);
-    if (username) {
-      usernames.push(username);
-    }
-    queue.push(...collectCommentChildren(comment));
-  }
+  roots.forEach((comment) => {
+    collectUsernamesFromCommentThread(comment, usernames);
+  });
 
   return [...new Set(usernames)];
 }
-

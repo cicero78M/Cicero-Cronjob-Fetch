@@ -64,7 +64,8 @@ function resolveJakartaDateString(referenceDate = new Date()) {
  * Return: array string username unik (lowercase, diawali @)
  */
 function extractUniqueUsernamesFromComments(commentsArr) {
-  return extractUsernamesFromCommentTree(commentsArr);
+  const commentUsernames = extractUsernamesFromCommentTree(commentsArr);
+  return [...new Set(commentUsernames)];
 }
 
 // Ambil komentar lama (existing) dari DB (username string array)
@@ -173,9 +174,7 @@ export async function handleFetchKomentarTiktokBatch(waClient = null, chatId = n
           }
           commentsToday = commentsToday || [];
           const uniqueUsernames = extractUniqueUsernamesFromComments(commentsToday);
-          const allUsernames = [
-            ...new Set([...uniqueUsernames, ...exceptionUsernames]),
-          ];
+          const allUsernames = [...new Set([...uniqueUsernames, ...exceptionUsernames])];
           const mergedUsernames = await upsertTiktokUserComments(
             video_id,
             allUsernames
