@@ -1,12 +1,14 @@
 import { query } from '../repository/db.js';
 import { buildPriorityOrderClause } from '../utils/sqlPriority.js';
+import {
+  extractUsernamesFromCommentTree,
+  normalizeTiktokCommentUsername,
+} from '../utils/tiktokCommentUsernameExtractor.js';
 
 const DEFAULT_ACTIVITY_START = '2025-09-01';
 
 function normalizeUsername(uname) {
-  if (typeof uname !== 'string' || uname.length === 0) return null;
-  const lower = uname.toLowerCase();
-  return lower.startsWith('@') ? lower : `@${lower}`;
+  return normalizeTiktokCommentUsername(uname);
 }
 
 function normalizeUsernameForSearch(value) {
@@ -58,20 +60,7 @@ function normalizeUsernamePayload(payload) {
  * @param {Array} commentsArr - Array of comment objects dari API
  */
 export async function upsertTiktokComments(video_id, commentsArr) {
-  // Ambil username dari commentsArr (prioritas: user.unique_id, fallback: username)
-  const usernames = [];
-  for (const c of commentsArr) {
-    let uname = null;
-    if (c && c.user && typeof c.user.unique_id === "string") {
-      uname = c.user.unique_id;
-    } else if (c && typeof c.username === "string") {
-      uname = c.username;
-    }
-    const normalized = normalizeUsername(uname);
-    if (normalized) usernames.push(normalized);
-  }
-  // Unikkan username (no duplicate)
-  const uniqUsernames = [...new Set(usernames)];
+  const uniqUsernames = extractUsernamesFromCommentTree(commentsArr);
 
   // Gabungkan dengan yang sudah ada (jika ada di DB)
   const qSelect = `SELECT comments FROM tiktok_comment WHERE video_id = $1`;

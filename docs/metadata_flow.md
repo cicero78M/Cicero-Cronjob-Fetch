@@ -1,5 +1,5 @@
 # Cicero Flow Metadata
-*Last updated: 2025-11-06*
+*Last updated: 2026-02-18*
 
 This document outlines the flow of data and the main database tables used by the Cicero_V2 system. It provides an overview from the initial onboarding steps through to reporting and notifications.
 
@@ -54,3 +54,22 @@ Administrators receive automated WhatsApp reports summarizing daily engagement. 
 
 
 Refer to [docs/naming_conventions.md](naming_conventions.md) for code style guidelines.
+
+## 5. TikTok Comment Username Mapping
+
+Untuk menjaga konsistensi data absensi komentar TikTok, ekstraksi username komentar kini dipusatkan di `src/utils/tiktokCommentUsernameExtractor.js`. Util ini dipakai ulang oleh handler fetch, model upsert, dan service export ranking agar mapping field tidak tersebar di banyak tempat.
+
+Urutan field yang didukung saat ekstraksi username komentar:
+
+1. `comment.user.unique_id`
+2. `comment.user.uniqueId`
+3. `comment.user.username`
+4. `comment.user.user_name` / `comment.user.userName`
+5. `comment.username`
+6. `comment.unique_id` / `comment.uniqueId`
+7. Alias payload RapidAPI lain yang sering muncul: `author.*`, `owner.*`, `author_user_name`, `author_username`, `user_unique_id`, `userUniqueId`
+
+Semua nilai username dinormalisasi ke format konsisten `@lowercase` menggunakan helper normalisasi handle yang sama seperti modul lain.
+
+Selain komentar level utama, util juga menelusuri balasan bertingkat (`replies`, `reply_comments`, `children`, `sub_comments`, dll.) untuk mencegah kehilangan user yang hanya muncul di nested thread.
+
