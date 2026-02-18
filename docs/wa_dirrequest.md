@@ -511,22 +511,15 @@ berpindah ke dashboard web atau menjalankan skrip manual.
   ke saluran debug dan admin WA.
 - Target cron ini mencakup seluruh client aktif (direktorat maupun org) yang
   memiliki Instagram atau TikTok aktif, bukan hanya direktorat.
-- Pesan startup Telegram untuk fase post-fetch kini memakai label `post fetch period (last run 17:15)` agar batas run terakhir selaras dengan kebijakan lock pengiriman grup setelah 17:15 WIB.
+- Pesan startup Telegram kini memakai label periode terpadu, karena evaluasi fetch post dilakukan per-client: client `org` dan `ditbinmas` fetch post hingga **20:00 WIB**, sedangkan `bidhumas` dan `ditintelkam` (termasuk penulisan `diitintelkam`) fetch post hingga **22:00 WIB**.
 - Tahap logging utama yang dicetak berurutan:
   1. **start**: memuat *Client ID* target dan penerima grup WA yang valid.
-  2. **timeCheck**: jika waktu Jakarta melewati **17:15 WIB**, cron tetap
-     menarik konten baru untuk memastikan refresh komentar malam memakai data
-     terbaru, tetapi pengiriman laporan ke grup dikunci untuk mencegah spam
-     larut malam.
-  3. **fetchPosts**: menarik konten baru IG/TikTok (hanya dilewati ketika
-     `forceEngagementOnly=true`, bukan karena batas waktu harian).
-  4. **refreshEngagement**: memperbarui likes/komentar menggunakan konten yang
-     baru diambil (termasuk setelah pukul 17:15 WIB).
+  2. **timeCheck**: cron berjalan periodik hingga malam, dengan keputusan fetch post ditentukan per-client berdasarkan jendela waktu masing-masing.
+  3. **fetchPosts**: menarik konten baru IG/TikTok selama masih di dalam jendela fetch post client (`06:00-20:59 WIB` untuk `org`/`ditbinmas`, `06:00-22:59 WIB` untuk `bidhumas`/`ditintelkam`).
+  4. **refreshEngagement**: memperbarui likes/komentar menggunakan konten yang baru diambil, termasuk setelah batas fetch post client terlewati.
   5. **buildMessage**: merangkum aksi (fetch/refresh), delta konten, dan total
      penerima.
-  6. **sendToRecipients**: mengirim narasi ke grup WA per client dan saluran
-     debug dengan status `sent` atau `skipped` (laporan grup disupresi setelah
-     17:15 WIB).
+  6. **sendToRecipients**: mengirim narasi ke grup WA per client dan saluran debug dengan status `sent` atau `skipped`.
 - Pesan *no changes* tetap dicetak ketika tidak ada konten baru atau ketika
   seluruh akun tidak berubah; log tersebut memuat `action=refresh_only` atau
   `result=no_change` sehingga admin tahu cron berjalan tetapi tidak ada delta.
@@ -545,11 +538,6 @@ berpindah ke dashboard web atau menjalankan skrip manual.
   - **Sukses kirim** ke grup: `cronDirRequestFetchSosmed | clientId=DITBINMAS`
     `action=fetch_dirrequest result=sent countsBefore=ig:12/tk:9`
     `countsAfter=ig:15/tk:10 recipients=120363419830216549@g.us`.
-  - **Lewat 17:15** (kirim grup dikunci, refresh tetap jalan):
-    `cronDirRequestFetchSosmed | action=timeCheck result=limited`
-    `message="Setelah 17:15 WIB pengiriman ke grup dikunci; fetch post & refresh engagement tetap jalan supaya data komentar malam tetap terbaru"`
-    `meta={"jakartaTime":"17:16"}` diikuti log `tiktokFetch result=completed`
-    dan `sendReport result=suppressed`.
   - **Error** pada refresh: `cronDirRequestFetchSosmed | clientId=BIDHUMAS`
     `action=refreshEngagement result=error message="RapidAPI 429"`
     `recipients=admin@c.us` (stack trace dicetak di log debug).
@@ -657,3 +645,11 @@ berpindah ke dashboard web atau menjalankan skrip manual.
 - Setiap perubahan fungsi/modul dirrequest yang berdampak ke jadwal/notifikasi
   wajib disertai update dokumentasi terkait (`README`, `business_process`,
   `scheduled_notifications`, dan dokumen `wa_*` yang terdampak).
+
+
+## Jendela Waktu Fetch Post per Client
+- Batas fetch post **17:00 WIB** sudah dihapus.
+- Rentang dasar fetch post sekarang dimulai dari **06:00 WIB** dan berakhir sesuai kategori client:
+  - `client_type=org` dan `client_id=ditbinmas`: fetch post sampai **20:00 WIB** (hour `<= 20`).
+  - `client_id=bidhumas`, `client_id=ditintelkam`, dan alias `client_id=diitintelkam`: fetch post sampai **22:00 WIB** (hour `<= 22`).
+- Di luar jendela di atas, cron tetap menjalankan refresh engagement (likes/komentar) agar data malam tetap terbarui.

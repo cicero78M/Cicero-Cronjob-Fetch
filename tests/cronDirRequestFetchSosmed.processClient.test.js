@@ -68,9 +68,10 @@ jest.unstable_mockModule('../src/model/waNotificationReminderStateModel.js', () 
 }));
 
 let processClient;
+let shouldFetchPostsForClient;
 
 beforeAll(async () => {
-  ({ processClient } = await import('../src/cron/cronDirRequestFetchSosmed.js'));
+  ({ processClient, shouldFetchPostsForClient } = await import('../src/cron/cronDirRequestFetchSosmed.js'));
 });
 
 beforeEach(() => {
@@ -96,7 +97,6 @@ test('does not refresh TikTok comments when client_tiktok_status is false', asyn
       client_tiktok_status: false,
     },
     {
-      skipPostFetch: false,
       schedulerStateByClient,
       stateStorageHealthy: true,
     }
@@ -106,4 +106,29 @@ test('does not refresh TikTok comments when client_tiktok_status is false', asyn
   expect(mockFetchKomentarTiktokBatch).not.toHaveBeenCalled();
   expect(mockFetchInsta).toHaveBeenCalled();
   expect(mockFetchLikes).toHaveBeenCalled();
+});
+
+
+describe('shouldFetchPostsForClient', () => {
+  test('org and ditbinmas clients fetch posts until 20:59 WIB', () => {
+    const orgClient = { client_id: 'POLRESTA', client_type: 'org' };
+    const ditbinmasClient = { client_id: 'DITBINMAS', client_type: 'direktorat' };
+
+    expect(shouldFetchPostsForClient(orgClient, new Date('2026-01-01T13:00:00.000Z'))).toBe(true); // 20:00 WIB
+    expect(shouldFetchPostsForClient(orgClient, new Date('2026-01-01T14:00:00.000Z'))).toBe(false); // 21:00 WIB
+
+    expect(shouldFetchPostsForClient(ditbinmasClient, new Date('2026-01-01T13:00:00.000Z'))).toBe(true); // 20:00 WIB
+    expect(shouldFetchPostsForClient(ditbinmasClient, new Date('2026-01-01T14:00:00.000Z'))).toBe(false); // 21:00 WIB
+  });
+
+  test('bidhumas and ditintelkam clients fetch posts until 22:59 WIB', () => {
+    const bidhumasClient = { client_id: 'BIDHUMAS', client_type: 'direktorat' };
+    const ditintelkamClient = { client_id: 'DITINTELKAM', client_type: 'direktorat' };
+
+    expect(shouldFetchPostsForClient(bidhumasClient, new Date('2026-01-01T15:00:00.000Z'))).toBe(true); // 22:00 WIB
+    expect(shouldFetchPostsForClient(bidhumasClient, new Date('2026-01-01T16:00:00.000Z'))).toBe(false); // 23:00 WIB
+
+    expect(shouldFetchPostsForClient(ditintelkamClient, new Date('2026-01-01T15:00:00.000Z'))).toBe(true); // 22:00 WIB
+    expect(shouldFetchPostsForClient(ditintelkamClient, new Date('2026-01-01T16:00:00.000Z'))).toBe(false); // 23:00 WIB
+  });
 });
