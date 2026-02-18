@@ -167,16 +167,33 @@ function buildNextSchedulerState(schedulerState, countsAfter, notificationSent, 
   };
 }
 
-/**
- * Determine if we should fetch posts based on current time
- * Post-fetch window includes mandatory 17:05 run, so we allow hour <= 17.
- * @returns {boolean} True if it's time to fetch posts (06:00-17:59 WIB)
- */
-function shouldFetchPosts() {
-  const jakartaHour = getJakartaTimeParts(new Date()).hour;
+const EXTENDED_FETCH_UNTIL_22_CLIENT_IDS = new Set(["bidhumas", "ditintelkam", "diitintelkam"]);
 
-  // Check if hour is between 6 and 17 (includes mandatory 17:05 post-fetch slot)
-  return jakartaHour >= 6 && jakartaHour <= 17;
+function resolvePostFetchEndHour(client) {
+  const clientId = normalizeClientId(client?.client_id).toLowerCase();
+  const clientType = String(client?.client_type || "").trim().toLowerCase();
+
+  if (clientType === "org" || clientId === "ditbinmas") {
+    return 20;
+  }
+
+  if (EXTENDED_FETCH_UNTIL_22_CLIENT_IDS.has(clientId)) {
+    return 22;
+  }
+
+  return 20;
+}
+
+/**
+ * Determine if we should fetch posts for a client based on current time.
+ * @returns {boolean} True if it's time to fetch posts for the client.
+ */
+export function shouldFetchPostsForClient(client, date = new Date()) {
+  const jakartaHour = getJakartaTimeParts(date).hour;
+  const endHour = resolvePostFetchEndHour(client);
+
+  // Post fetch runs from 06:00 WIB until the configured end hour per client.
+  return jakartaHour >= 6 && jakartaHour <= endHour;
 }
 
 /**
@@ -187,13 +204,13 @@ function shouldFetchPosts() {
 function shouldSendHourlyNotifications() {
   const jakartaHour = getJakartaTimeParts(new Date()).hour;
 
-  // Check if hour is between 6 and 17 (includes 17:05 scheduled notification slot)
-  return jakartaHour >= 6 && jakartaHour <= 17;
+  // Check if hour is between 6 and 22 WIB.
+  return jakartaHour >= 6 && jakartaHour <= 22;
 }
 
 export async function processClient(client, options = {}) {
   const {
-    skipPostFetch,
+    forceEngagementOnly,
     schedulerStateByClient,
     stateStorageHealthy,
   } = options;
@@ -201,6 +218,7 @@ export async function processClient(client, options = {}) {
   const clientId = normalizeClientId(client?.client_id);
   const hasInstagram = client?.client_insta_status !== false;
   const hasTiktok = client?.client_tiktok_status !== false;
+  const skipPostFetch = forceEngagementOnly || !shouldFetchPostsForClient(client);
   const schedulerState = schedulerStateByClient.get(clientId) || buildFallbackState(clientId);
   const currentSlotKey = buildJakartaHourlySlotKey(new Date());
 
@@ -404,16 +422,12 @@ export async function runCron(options = {}) {
     lockHeldByCurrentRun = true;
 
     // Determine if we should fetch posts based on time
-    const isPostFetchTime = shouldFetchPosts();
-    const skipPostFetch = forceEngagementOnly || !isPostFetchTime;
-
-    const timeBasedMessage = isPostFetchTime
-      ? "post fetch period (mandatory run at 17:05)"
-      : "engagement only period (17:30-22:00)";
+    const timeBasedMessage = forceEngagementOnly
+      ? "engagement only period (forced by options)"
+      : "post fetch/engagement period (per-client schedule until 20:00 or 22:00 WIB)";
 
     logMessage("start", null, "cron", "start", null, null, "", {
       forceEngagementOnly,
-      skipPostFetch,
       clientConcurrency,
       maxRunDurationMs,
       timeBasedMessage
@@ -463,7 +477,7 @@ export async function runCron(options = {}) {
       clientTasks.push(limit(async () => {
         try {
           const result = await processClient(client, {
-            skipPostFetch,
+            forceEngagementOnly,
             schedulerStateByClient,
             stateStorageHealthy,
           });
@@ -529,34 +543,20 @@ export async function runCron(options = {}) {
 
 export const JOB_KEY = "./src/cron/cronDirRequestFetchSosmed.js";
 
-// Posts fetch: Run every 30 minutes from 06:05 to 16:30 Jakarta time.
-// Mandatory extra run at 17:05 so it aligns with hourly slot anchor (@05)
-// and guarantees the 17:00-17:59 hourly scheduled message is emitted.
-const POST_FETCH_SCHEDULE = "5,30 6-16 * * *";
-const MANDATORY_17_FETCH_SCHEDULE = "5 17 * * *";
-
-// Engagement only: Run every 30 minutes from 5:30 PM to 10 PM Jakarta time
-// First execution at 17:30 (5:30 PM), after post fetch period ends
-// This includes: 17:30, 18:00, 18:30, 19:00, 19:30, 20:00, 20:30, 21:00, 21:30, 22:00
-const ENGAGEMENT_ONLY_SCHEDULES = [
-  "30 17-21 * * *",  // 17:30, 18:30, 19:30, 20:30, 21:30
-  "0 18-22 * * *"    // 18:00, 19:00, 20:00, 21:00, 22:00
+// Unified run every 30 minutes from 06:00-22:30 WIB.
+// Post-fetch eligibility is decided per client inside shouldFetchPostsForClient().
+const UNIFIED_FETCH_SCHEDULES = [
+  "0,30 6-22 * * *",
 ];
 
 const CRON_OPTIONS = { timezone: "Asia/Jakarta" };
 
-// Schedule post fetch job (every 30 min from 06:05 to 16:30)
-scheduleCronJob(JOB_KEY + ":post-fetch", POST_FETCH_SCHEDULE, runCron, CRON_OPTIONS);
-
-// Mandatory post-fetch run at 17:05 WIB (not engagement-only)
-scheduleCronJob(JOB_KEY + ":post-fetch-17", MANDATORY_17_FETCH_SCHEDULE, runCron, CRON_OPTIONS);
-
-// Schedule engagement only jobs (17:30 to 22:00)
-ENGAGEMENT_ONLY_SCHEDULES.forEach((schedule, index) => {
+// Schedule unified fetch jobs (06:00 to 22:30)
+UNIFIED_FETCH_SCHEDULES.forEach((schedule, index) => {
   scheduleCronJob(
-    JOB_KEY + `:engagement-only-${index}`,
+    JOB_KEY + `:unified-fetch-${index}`,
     schedule,
-    () => runCron({ forceEngagementOnly: true }),
+    runCron,
     CRON_OPTIONS
   );
 });
