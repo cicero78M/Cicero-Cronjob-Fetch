@@ -40,6 +40,7 @@ Notifikasi tugas hanya dikirim jika ada perubahan signifikan (`hasNotableChanges
 
 ## 3) Catatan Penting Kompatibilitas
 
+- **Migration ops (penghapusan blast per jam):** monitoring yang sebelumnya mengandalkan ritme pesan hourly harus dialihkan ke indikator perubahan data (`hasNotableChanges`) dan metrik outbox (`pending/sent/dead_letter`). Ketiadaan pesan pada slot tertentu kini normal bila tidak ada perubahan post/link.
 - `src/service/telegramService.js` saat ini dipakai sebagai **wrapper WhatsApp logging/alert** untuk backward compatibility.
 - Nama `telegramService` dipertahankan agar modul lama tidak perlu refactor besar, tetapi kanal aktual yang dipakai operasional adalah WhatsApp admin/gateway.
 
