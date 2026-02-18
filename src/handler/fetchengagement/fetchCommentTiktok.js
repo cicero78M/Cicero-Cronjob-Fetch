@@ -5,6 +5,10 @@ import { query } from "../../db/index.js";
 import { sendDebug } from "../../middleware/debugHandler.js";
 import { fetchAllTiktokComments } from "../../service/tiktokApi.js";
 import { saveCommentSnapshotAudit } from "../../model/tiktokCommentModel.js";
+import {
+  extractUsernamesFromCommentTree,
+  normalizeTiktokCommentUsername,
+} from "../../utils/tiktokCommentUsernameExtractor.js";
 
 const MAX_COMMENT_FETCH_ATTEMPTS = 3;
 const COMMENT_FETCH_RETRY_DELAY_MS = 2000;
@@ -18,12 +22,6 @@ const limit = pLimit(3); // atur parallel fetch sesuai kebutuhan
 
 function normalizeClientId(id) {
   return typeof id === "string" ? id.trim().toLowerCase() : id;
-}
-
-function normalizeUsername(uname) {
-  if (typeof uname !== "string" || uname.length === 0) return null;
-  const lower = uname.trim().toLowerCase();
-  return lower.startsWith("@") ? lower : `@${lower}`;
 }
 
 function normalizeDateInput(value) {
@@ -66,19 +64,7 @@ function resolveJakartaDateString(referenceDate = new Date()) {
  * Return: array string username unik (lowercase, diawali @)
  */
 function extractUniqueUsernamesFromComments(commentsArr) {
-  const usernames = [];
-  for (const c of commentsArr) {
-    let uname = null;
-    if (c && c.user && typeof c.user.unique_id === "string") {
-      uname = c.user.unique_id;
-    } else if (c && typeof c.username === "string") {
-      uname = c.username;
-    }
-    const normalized = normalizeUsername(uname);
-    if (normalized) usernames.push(normalized);
-  }
-  // Unikkan username (no duplicate)
-  return [...new Set(usernames)];
+  return extractUsernamesFromCommentTree(commentsArr);
 }
 
 // Ambil komentar lama (existing) dari DB (username string array)
@@ -90,7 +76,7 @@ async function getExistingUsernames(video_id) {
   if (res.rows.length && Array.isArray(res.rows[0].comments)) {
     // pastikan string array
     return res.rows[0].comments
-      .map((u) => normalizeUsername(u))
+      .map((u) => normalizeTiktokCommentUsername(u))
       .filter(Boolean);
   }
   return [];
@@ -132,7 +118,7 @@ export async function handleFetchKomentarTiktokBatch(waClient = null, chatId = n
       `SELECT tiktok FROM "user" WHERE exception = true AND tiktok IS NOT NULL`
     );
     const exceptionUsernames = excRes.rows
-      .map((r) => normalizeUsername(r.tiktok))
+      .map((r) => normalizeTiktokCommentUsername(r.tiktok))
       .filter(Boolean);
     sendDebug({
       tag: "TTK COMMENT",

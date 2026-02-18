@@ -5,6 +5,7 @@ import XLSX from "xlsx";
 import { findClientById } from "./clientService.js";
 import { getShortcodesByDateRange } from "../model/instaPostModel.js";
 import { getLikesSets, groupUsersByClientDivision, normalizeUsername } from "../utils/likesHelper.js";
+import { extractUsernamesFromCommentTree } from "../utils/tiktokCommentUsernameExtractor.js";
 import { getPostsByClientAndDateRange } from "../model/tiktokPostModel.js";
 import { getCommentsByVideoId } from "../model/tiktokCommentModel.js";
 import { computeDitbinmasLikesStats } from "../handler/fetchabsensi/insta/ditbinmasLikesUtils.js";
@@ -200,18 +201,9 @@ function sanitizeFilename(value) {
 }
 
 function extractUsernamesFromComments(comments) {
-  return (comments || [])
-    .map((item) => {
-      if (!item) return "";
-      if (typeof item === "string") return item;
-      if (typeof item.username === "string") return item.username;
-      if (item.user && typeof item.user.unique_id === "string") {
-        return item.user.unique_id;
-      }
-      return "";
-    })
-    .map((username) => normalizeUsername(username))
-    .filter(Boolean);
+  return extractUsernamesFromCommentTree(comments).map((username) =>
+    normalizeUsername(username)
+  );
 }
 
 function computeCommentSummary(users = [], commentSets = [], totalKonten = 0) {
