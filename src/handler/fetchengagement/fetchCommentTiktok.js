@@ -152,69 +152,76 @@ export async function handleFetchKomentarTiktokBatch(waClient = null, chatId = n
       capturedAt: options.capturedAt || options.snapshotWindow?.capturedAt,
     });
 
-    let sukses = 0, gagal = 0;
-    for (const video_id of videoIds) {
-      await limit(async () => {
-        try {
-          let commentsToday = null;
-          for (let attempt = 1; attempt <= MAX_COMMENT_FETCH_ATTEMPTS; attempt++) {
-            try {
-              commentsToday = await fetchAllTiktokComments(video_id);
-              break;
-            } catch (err) {
-              if (attempt >= MAX_COMMENT_FETCH_ATTEMPTS) throw err;
-              sendDebug({
-                tag: "TTK COMMENT RETRY",
-                msg: `Video ${video_id}: percobaan ${attempt} gagal (${(err && err.message) || String(err)}), mencoba ulang...`,
-                client_id: video_id,
-              });
-              const waitMs = COMMENT_FETCH_RETRY_DELAY_MS * attempt;
-              await delay(waitMs);
-            }
-          }
-          commentsToday = commentsToday || [];
-          const uniqueUsernames = extractUniqueUsernamesFromComments(commentsToday);
-          const allUsernames = [...new Set([...uniqueUsernames, ...exceptionUsernames])];
-          const mergedUsernames = await upsertTiktokUserComments(
-            video_id,
-            allUsernames
-          );
+    const taskResults = await Promise.all(
+      videoIds.map((videoId) =>
+        limit(async () => {
+          const startedAt = Date.now();
           try {
-            await saveCommentSnapshotAudit({
-              video_id,
-              usernames: mergedUsernames,
-              snapshotWindowStart: snapshotWindow.snapshotWindowStart,
-              snapshotWindowEnd: snapshotWindow.snapshotWindowEnd,
-              capturedAt: snapshotWindow.capturedAt,
-            });
+            let commentsToday = null;
+            for (let attempt = 1; attempt <= MAX_COMMENT_FETCH_ATTEMPTS; attempt++) {
+              try {
+                commentsToday = await fetchAllTiktokComments(videoId);
+                break;
+              } catch (err) {
+                if (attempt >= MAX_COMMENT_FETCH_ATTEMPTS) throw err;
+                sendDebug({
+                  tag: "TTK COMMENT RETRY",
+                  msg: `Video ${videoId}: percobaan ${attempt} gagal (${(err && err.message) || String(err)}), mencoba ulang...`,
+                  client_id: videoId,
+                });
+                const waitMs = COMMENT_FETCH_RETRY_DELAY_MS * attempt;
+                await delay(waitMs);
+              }
+            }
+            commentsToday = commentsToday || [];
+            const uniqueUsernames = extractUniqueUsernamesFromComments(commentsToday);
+            const allUsernames = [...new Set([...uniqueUsernames, ...exceptionUsernames])];
+            const mergedUsernames = await upsertTiktokUserComments(
+              videoId,
+              allUsernames
+            );
+            try {
+              await saveCommentSnapshotAudit({
+                video_id: videoId,
+                usernames: mergedUsernames,
+                snapshotWindowStart: snapshotWindow.snapshotWindowStart,
+                snapshotWindowEnd: snapshotWindow.snapshotWindowEnd,
+                capturedAt: snapshotWindow.capturedAt,
+              });
+              sendDebug({
+                tag: "TTK COMMENT AUDIT",
+                msg: `Snapshot komentar tersimpan untuk ${videoId} (${snapshotWindow.snapshotWindowStart.toISOString()} - ${snapshotWindow.snapshotWindowEnd.toISOString()})`,
+                client_id: videoId,
+              });
+            } catch (auditErr) {
+              sendDebug({
+                tag: "TTK COMMENT AUDIT ERROR",
+                msg: `Gagal menyimpan audit komentar ${videoId}: ${(auditErr && auditErr.message) || String(auditErr)}`,
+                client_id: videoId,
+              });
+            }
+            const durationMs = Date.now() - startedAt;
             sendDebug({
-              tag: "TTK COMMENT AUDIT",
-              msg: `Snapshot komentar tersimpan untuk ${video_id} (${snapshotWindow.snapshotWindowStart.toISOString()} - ${snapshotWindow.snapshotWindowEnd.toISOString()})`,
-              client_id: video_id,
+              tag: "TTK COMMENT MERGE",
+              msg: `Video ${videoId}: Berhasil simpan/merge komentar (${mergedUsernames.length} username unik) dalam ${durationMs}ms`,
+              client_id: videoId,
             });
-          } catch (auditErr) {
+            return { status: "success", videoId, durationMs };
+          } catch (err) {
+            const durationMs = Date.now() - startedAt;
             sendDebug({
-              tag: "TTK COMMENT AUDIT ERROR",
-              msg: `Gagal menyimpan audit komentar ${video_id}: ${(auditErr && auditErr.message) || String(auditErr)}`,
-              client_id: video_id,
+              tag: "TTK COMMENT ERROR",
+              msg: `Gagal fetch/merge video ${videoId}: ${(err && err.message) || String(err)} (durasi ${durationMs}ms)`,
+              client_id: videoId,
             });
+            return { status: "failed", videoId, durationMs };
           }
-          sukses++;
-          sendDebug({
-            tag: "TTK COMMENT MERGE",
-            msg: `Video ${video_id}: Berhasil simpan/merge komentar (${mergedUsernames.length} username unik)`,
-            client_id: video_id
-          });
-        } catch (err) {
-          sendDebug({
-            tag: "TTK COMMENT ERROR",
-            msg: `Gagal fetch/merge video ${video_id}: ${(err && err.message) || String(err)}`,
-            client_id: video_id
-          });
-          gagal++;
-        }
-      });
-    }
+        })
+      )
+    );
+
+    const sukses = taskResults.filter((result) => result.status === "success").length;
+    const gagal = taskResults.length - sukses;
 
     if (waClient && chatId) {
       await waClient.sendMessage(
