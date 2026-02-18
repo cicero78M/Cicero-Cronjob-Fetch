@@ -1,5 +1,5 @@
 # Source of Truth: Jadwal Cron & Flow Notifikasi Sosmed
-*Last updated: 2026-02-14*
+*Last updated: 2026-02-18*
 
 Dokumen ini adalah referensi utama untuk jadwal cron dan alur notifikasi pada modul fetch sosmed.
 Jika ada perbedaan dengan dokumen lain, **ikuti dokumen ini + implementasi di `src/cron/cronDirRequestFetchSosmed.js`**.
@@ -7,33 +7,27 @@ Jika ada perbedaan dengan dokumen lain, **ikuti dokumen ini + implementasi di `s
 ## 1) Jadwal Eksekusi (Asia/Jakarta)
 
 Sumber implementasi:
-- `POST_FETCH_SCHEDULE = "5,30 6-16 * * *"`
-- `MANDATORY_17_FETCH_SCHEDULE = "5 17 * * *"`
-- `ENGAGEMENT_ONLY_SCHEDULES = ["30 17-21 * * *", "0 18-22 * * *"]`
+- `UNIFIED_FETCH_SCHEDULES = ["0,30 6-21 * * *", "58 20-21 * * *"]`
 
-### A. Post Fetch + Engagement Refresh
-- Cron gabungan: `5,30 6-16 * * *` + `5 17 * * *`
-- Jam jalan: **06:05, 06:30, 07:05, 07:30, ... , 16:05, 16:30, 17:05**
-- Aksi:
-  - Fetch post Instagram
-  - Fetch post TikTok
+### A. Unified Fetch + Engagement Refresh
+- Cron gabungan: `0,30 6-21 * * *` + final `58 20-21 * * *`
+- Jam jalan: **06:00, 06:30, ... , 20:00, 20:30, 20:58, 21:00, 21:30, 21:58**
+- Aksi tiap run:
   - Refresh likes Instagram
   - Refresh komentar TikTok
+  - Fetch post Instagram/TikTok hanya bila lolos gating slot per segmen client
 
-### B. Engagement-Only
-- Cron: `30 17-21 * * *` dan `0 18-22 * * *`
-- Jam jalan gabungan: **17:30, 18:00, 18:30, 19:00, 19:30, 20:00, 20:30, 21:00, 21:30, 22:00**
-- Aksi:
-  - Refresh likes Instagram
-  - Refresh komentar TikTok
-  - **Tidak fetch post baru**
+### B. Segment Runtime Gating untuk Fetch Post
+- **Segmen A** (`org` atau `ditbinmas`): fetch post hanya pada `06:00-20:30` + final `20:58`.
+- **Segmen B** (`direktorat` selain `ditbinmas`): fetch post hanya pada `06:00-21:30` + final `21:58`.
+- Di luar slot valid segmen: `skipPostFetch=true` (engagement refresh tetap dieksekusi).
 
 ## 2) Flow Notifikasi WA
 
 ### Trigger notifikasi
 Notifikasi tugas dikirim jika salah satu kondisi benar:
 1. Ada perubahan signifikan (`hasNotableChanges(changes)`), atau
-2. Slot hourly aktif berdasarkan state (`shouldSendHourlyNotification`) selama jam post-fetch (06:00–17:59 WIB, termasuk run wajib 17:05).
+2. Slot hourly aktif berdasarkan state (`shouldSendHourlyNotification`) selama window notifikasi hourly (06:00–22:59 WIB).
 
 ### Behavior stateful
 - Hourly slot: berbasis **slot global Jakarta** dengan key format `YYYY-MM-DD-HH@05`.
@@ -48,7 +42,7 @@ Notifikasi tugas dikirim jika salah satu kondisi benar:
 - Jika storage state gagal, sistem masuk mode konservatif: notifikasi hanya dikirim saat ada perubahan.
 
 ### Bentuk pesan
-- `forceScheduled=true`: kirim ringkasan tugas terjadwal (tetap kirim walau tidak ada perubahan), termasuk slot wajib 17:05 untuk semua client aktif.
+- `forceScheduled=true`: kirim ringkasan tugas terjadwal (tetap kirim walau tidak ada perubahan) saat slot hourly baru belum pernah dinotifikasi di hari/jam tersebut.
 - `forceScheduled=false`: kirim saat ada perubahan.
 
 ## 3) Catatan Penting Kompatibilitas
