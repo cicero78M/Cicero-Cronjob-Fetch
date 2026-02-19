@@ -160,6 +160,10 @@ function formatPostDeletions(changes, clientName) {
   const {
     igDeleted = 0,
     tiktokDeleted = 0,
+    igDeletedSource = 'unknown',
+    tiktokDeletedSource = 'unknown',
+    igMissingShortcodes = [],
+    tiktokMissingIds = [],
     igDeletedPosts = [],
     tiktokDeletedPosts = [],
   } = changes;
@@ -172,7 +176,13 @@ function formatPostDeletions(changes, clientName) {
   ];
 
   if (igDeleted > 0) {
-    lines.push(`📸 *${igDeleted}* konten Instagram telah dihapus dari daftar tugas.`);
+    const igIsSyncAnomaly = igDeletedSource === 'sync_anomaly';
+    lines.push(
+      igIsSyncAnomaly
+        ? `📸 *${igDeleted}* konten Instagram terdeteksi perubahan sinkronisasi pada daftar tugas.`
+        : `📸 *${igDeleted}* konten Instagram terdeteksi tidak lagi ada di daftar tugas.`
+    );
+    lines.push(`   source: ${igDeletedSource}`);
 
     if (igDeletedPosts.length > 0) {
       lines.push('Link konten Instagram yang dihapus:');
@@ -180,10 +190,20 @@ function formatPostDeletions(changes, clientName) {
         lines.push(`${index + 1}. ${link}`);
       });
     }
+
+    if (igMissingShortcodes.length > 0) {
+      lines.push(`   shortlist_shortcode: ${igMissingShortcodes.join(', ')}`);
+    }
   }
   
   if (tiktokDeleted > 0) {
-    lines.push(`🎵 *${tiktokDeleted}* konten TikTok telah dihapus dari daftar tugas.`);
+    const tiktokIsSyncAnomaly = tiktokDeletedSource === 'sync_anomaly';
+    lines.push(
+      tiktokIsSyncAnomaly
+        ? `🎵 *${tiktokDeleted}* konten TikTok terdeteksi perubahan sinkronisasi pada daftar tugas.`
+        : `🎵 *${tiktokDeleted}* konten TikTok terdeteksi tidak lagi ada di daftar tugas.`
+    );
+    lines.push(`   source: ${tiktokDeletedSource}`);
 
     if (tiktokDeletedPosts.length > 0) {
       lines.push('Link konten TikTok yang dihapus:');
@@ -191,11 +211,15 @@ function formatPostDeletions(changes, clientName) {
         lines.push(`${index + 1}. ${link}`);
       });
     }
+
+    if (tiktokMissingIds.length > 0) {
+      lines.push(`   shortlist_video_id: ${tiktokMissingIds.join(', ')}`);
+    }
   }
 
   lines.push('');
-  lines.push('_Tugas yang dihapus tidak perlu dikerjakan lagi._');
-  lines.push('_Berikutnya silakan cek update daftar tugas terbaru._');
+  lines.push('_Silakan validasi manual shortlist di atas dengan daftar tugas terbaru._');
+  lines.push('_Jika source=sync_anomaly, mohon koordinasi lintas tim untuk investigasi sinkronisasi._');
   
   return lines.join('\n');
 }
@@ -422,11 +446,11 @@ async function formatScheduledTaskList(clientName, changes = null, clientId = nu
     }
     
     if (changes.igDeleted > 0) {
-      lines.push(`❌ -${changes.igDeleted} konten Instagram dihapus`);
+      lines.push(`❌ ig_deleted=${changes.igDeleted} (source=${changes.igDeletedSource || 'unknown'})`);
     }
     
     if (changes.tiktokDeleted > 0) {
-      lines.push(`❌ -${changes.tiktokDeleted} konten TikTok dihapus`);
+      lines.push(`❌ tiktok_deleted=${changes.tiktokDeleted} (source=${changes.tiktokDeletedSource || 'unknown'})`);
     }
     
     if (changes.linkChanges && changes.linkChanges.length > 0) {
@@ -724,26 +748,28 @@ export async function enqueueTugasNotification(clientId, changes, options = {}) 
  */
 export function buildChangeSummary(changes) {
   const parts = [];
-  
+
   if (changes.igAdded && changes.igAdded.length > 0) {
-    parts.push(`+${changes.igAdded.length} IG posts`);
+    parts.push(`ig_added=${changes.igAdded.length}`);
   }
-  
+
   if (changes.tiktokAdded && changes.tiktokAdded.length > 0) {
-    parts.push(`+${changes.tiktokAdded.length} TikTok posts`);
+    parts.push(`tiktok_added=${changes.tiktokAdded.length}`);
   }
-  
+
   if (changes.igDeleted > 0) {
-    parts.push(`-${changes.igDeleted} IG posts`);
+    const shortlist = (changes.igMissingShortcodes || []).slice(0, 3).join('|') || '-';
+    parts.push(`ig_deleted=${changes.igDeleted}(source=${changes.igDeletedSource || 'unknown'},shortlist=${shortlist})`);
   }
-  
+
   if (changes.tiktokDeleted > 0) {
-    parts.push(`-${changes.tiktokDeleted} TikTok posts`);
+    const shortlist = (changes.tiktokMissingIds || []).slice(0, 3).join('|') || '-';
+    parts.push(`tiktok_deleted=${changes.tiktokDeleted}(source=${changes.tiktokDeletedSource || 'unknown'},shortlist=${shortlist})`);
   }
-  
+
   if (changes.linkChanges && changes.linkChanges.length > 0) {
-    parts.push(`~${changes.linkChanges.length} link changes`);
+    parts.push(`link_changes=${changes.linkChanges.length}`);
   }
-  
-  return parts.length > 0 ? parts.join(', ') : 'no changes';
+
+  return parts.length > 0 ? parts.join('; ') : 'no_changes';
 }

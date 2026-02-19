@@ -2,6 +2,10 @@
 
 import { query } from '../repository/db.js';
 
+const SYNC_ANOMALY_ABSOLUTE_THRESHOLD = 5;
+const SYNC_ANOMALY_RATIO_THRESHOLD = 0.5;
+const MISSING_SHORTLIST_LIMIT = 5;
+
 /**
  * Get recent Instagram posts for a client (last 24 hours)
  * @param {string} clientId - Client ID
@@ -79,6 +83,61 @@ export async function getRecentLinkChanges(clientId) {
   }
 }
 
+async function getMissingInstaShortcodesShortlist(clientId, limit = MISSING_SHORTLIST_LIMIT) {
+  try {
+    const result = await query(
+      `SELECT shortcode
+       FROM insta_post
+       WHERE LOWER(client_id) = LOWER($1)
+         AND shortcode IS NOT NULL
+         AND created_at >= NOW() - INTERVAL '48 hours'
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [clientId, limit]
+    );
+
+    return (result.rows || []).map((row) => row.shortcode).filter(Boolean);
+  } catch (error) {
+    console.error('[TUGAS_DETECTOR] Error building Instagram missing shortlist:', error.message);
+    return [];
+  }
+}
+
+async function getMissingTiktokIdsShortlist(clientId, limit = MISSING_SHORTLIST_LIMIT) {
+  try {
+    const result = await query(
+      `SELECT video_id
+       FROM tiktok_post
+       WHERE LOWER(client_id) = LOWER($1)
+         AND video_id IS NOT NULL
+         AND created_at >= NOW() - INTERVAL '48 hours'
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [clientId, limit]
+    );
+
+    return (result.rows || []).map((row) => row.video_id).filter(Boolean);
+  } catch (error) {
+    console.error('[TUGAS_DETECTOR] Error building TikTok missing shortlist:', error.message);
+    return [];
+  }
+}
+
+function classifyDeletionSource(previousCount, deletedCount, detectedShortlistCount) {
+  if (deletedCount <= 0) {
+    return 'unknown';
+  }
+
+  if (detectedShortlistCount <= 0) {
+    return 'unknown';
+  }
+
+  const ratio = previousCount > 0 ? deletedCount / previousCount : 1;
+  const isLikelySyncAnomaly = deletedCount >= SYNC_ANOMALY_ABSOLUTE_THRESHOLD || ratio >= SYNC_ANOMALY_RATIO_THRESHOLD;
+
+  return isLikelySyncAnomaly ? 'sync_anomaly' : 'real_missing';
+}
+
 /**
  * Detect changes between previous and current state
  * @param {Object} previousState - Previous state with igCount and tiktokCount
@@ -92,6 +151,10 @@ export async function detectChanges(previousState, currentState, clientId) {
     tiktokAdded: [],
     igDeleted: 0,
     tiktokDeleted: 0,
+    igDeletedSource: 'unknown',
+    tiktokDeletedSource: 'unknown',
+    igMissingShortcodes: [],
+    tiktokMissingIds: [],
     linkChanges: []
   };
 
@@ -104,6 +167,12 @@ export async function detectChanges(previousState, currentState, clientId) {
       changes.igAdded = changes.igAdded.slice(0, igDiff);
     } else if (igDiff < 0) {
       changes.igDeleted = Math.abs(igDiff);
+      changes.igMissingShortcodes = await getMissingInstaShortcodesShortlist(clientId);
+      changes.igDeletedSource = classifyDeletionSource(
+        previousState.igCount,
+        changes.igDeleted,
+        changes.igMissingShortcodes.length
+      );
     }
 
     // Detect TikTok additions
@@ -114,6 +183,12 @@ export async function detectChanges(previousState, currentState, clientId) {
       changes.tiktokAdded = changes.tiktokAdded.slice(0, tiktokDiff);
     } else if (tiktokDiff < 0) {
       changes.tiktokDeleted = Math.abs(tiktokDiff);
+      changes.tiktokMissingIds = await getMissingTiktokIdsShortlist(clientId);
+      changes.tiktokDeletedSource = classifyDeletionSource(
+        previousState.tiktokCount,
+        changes.tiktokDeleted,
+        changes.tiktokMissingIds.length
+      );
     }
 
     // Get recent link changes

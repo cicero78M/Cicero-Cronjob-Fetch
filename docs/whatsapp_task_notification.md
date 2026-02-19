@@ -11,7 +11,7 @@ Sistem notifikasi tugas WhatsApp yang secara otomatis mengirimkan pesan ke grup 
 Sistem mendeteksi perubahan berikut:
 - **Penambahan konten Instagram**: Post baru yang perlu di-like dan diberi komentar
 - **Penambahan konten TikTok**: Video baru yang perlu diberi komentar
-- **Pengurangan konten**: Konten yang dihapus dari daftar tugas
+- **Pengurangan konten**: Konten yang tidak lagi terdeteksi pada daftar tugas (dengan klasifikasi penyebab perubahan)
 - **Perubahan link amplifikasi**: Link baru atau update link (Instagram, Facebook, Twitter/X, TikTok, YouTube)
 
 ### 2. Format Pesan
@@ -22,10 +22,19 @@ Pesan dikirim dalam format Indonesia dengan markdown WhatsApp:
 - Daftar konten dengan detail (shortcode/video_id, caption/deskripsi, link)
 - Instruksi tindak lanjut
 
-Untuk notifikasi **penghapusan konten**, pesan kini memuat:
-- Daftar link konten yang dihapus (jika link tersedia di payload perubahan)
-- Pengingat bahwa tugas yang dihapus tidak perlu dikerjakan
-- Tindak lanjut agar operator mengecek update daftar tugas terbaru
+
+Untuk notifikasi **pengurangan konten**, payload perubahan kini menyertakan metadata investigasi:
+- `igDeletedSource` / `tiktokDeletedSource` dengan nilai: `real_missing`, `sync_anomaly`, atau `unknown`
+- `igMissingShortcodes` / `tiktokMissingIds` sebagai shortlist ID konten (maksimal 5) untuk validasi manual
+
+Saat penurunan count besar/tidak wajar, sistem akan memakai wording netral seperti **"terdeteksi perubahan sinkronisasi"** (bukan langsung menyimpulkan konten dihapus), lalu menampilkan `source` dan shortlist agar lintas tim lebih mudah verifikasi.
+
+Untuk notifikasi **pengurangan konten**, pesan kini memuat:
+- Wording adaptif berbasis `source` (`real_missing` vs `sync_anomaly`)
+- Field `source: <nilai>` per platform
+- Shortlist manual check (`shortlist_shortcode` / `shortlist_video_id`)
+- Daftar link konten yang tidak lagi terdeteksi (jika tersedia di payload perubahan)
+- Instruksi validasi manual + koordinasi lintas tim untuk kasus `sync_anomaly`
 
 Setelah notifikasi penghapusan dikirim, sistem juga mengirim **update daftar tugas terbaru** (`📋 Daftar Tugas`) agar penerima langsung mendapatkan snapshot tugas terkini.
 
@@ -219,9 +228,11 @@ rg -n "^<<<<<<<|^=======|^>>>>>>>" src
 
 Sistem mencatat setiap langkah enqueue dan delivery dengan format seperti:
 ```
-[CRON DIRFETCH SOSMED][CLIENT_ID][waNotification][action=enqueueNotification][result=completed] | IG 5→8 | TikTok 3→4 | Outbox notification queued: Changes detected: +3 IG posts, +1 TikTok posts
+[CRON DIRFETCH SOSMED][CLIENT_ID][waNotification][action=enqueueNotification][result=completed] | IG 5→8 | TikTok 3→4 | Outbox notification queued: Changes detected: ig_added=3; tiktok_added=1; ig_deleted=6(source=sync_anomaly,shortlist=ABC123|DEF456|GHI789)
 [WA_OUTBOX_WORKER] processed claimed=10 sent=8 retried=1 dead_letter=1
 ```
+
+Format ringkasan perubahan (`buildChangeSummary`) kini disejajarkan dengan gaya key-value logger cron agar investigasi lintas tim lebih mudah (contoh: `ig_deleted=...`, `source=...`, `shortlist=...`).
 
 ## Keamanan
 
