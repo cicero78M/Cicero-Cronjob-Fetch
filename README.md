@@ -91,15 +91,18 @@ npm run dev
 
 The fetch job runs on the following schedule (Asia/Jakarta timezone):
 
-### Unified Fetch + Engagement Refresh (`0,30` + final `:58`)
-- Cron gabungan: `0,30 6-21 * * *` + `58 20-21 * * *`
-- Runs at: 06:00, 06:30, 07:00, 07:30, ..., 20:30, 20:58, 21:00, 21:30, 21:58
-- Setiap run selalu refresh Instagram likes + TikTok comments
-- Fetch post Instagram/TikTok mengikuti segmentasi runtime client:
-  - **Segmen A** (`org` / `ditbinmas`) valid hingga 20:58 WIB
-  - **Segmen B** (`direktorat` selain `ditbinmas`) valid hingga 21:58 WIB
-- Di luar slot valid segmen, proses tetap berjalan untuk engagement refresh dengan `skipPostFetch=true`
-- Notifikasi daftar tugas bersifat **change-driven only**: hanya dikirim saat ada perubahan data post/link (`hasNotableChanges`), tanpa blast terjadwal per jam
+### Post Fetch + Engagement Refresh (06:05 - 17:00, termasuk slot wajib)
+- Cron gabungan: `5,30 6-16 * * *` + `0 17 * * *`
+- Runs at: 06:05, 06:30, 07:05, 07:30, ..., 16:05, 16:30, 17:00
+- Fetches Instagram posts, TikTok posts, Instagram likes, and TikTok comments
+- Slot 17:00 adalah fetch + pesan tugas scheduled wajib untuk semua client aktif
+- Sends task notifications when there are notable changes, plus hourly scheduled notifications during post-fetch period (hingga 17:59 WIB)
+
+### Engagement Only (17:30 - 22:00)
+- Cron gabungan: `30 17-21 * * *` + `0 18-22 * * *`
+- Runs at: 17:30, 18:00, 18:30, ..., 21:30, 22:00
+- Only refreshes Instagram likes and TikTok comments (no post fetch)
+- Notifications remain change-driven; hourly scheduled sends are limited to post-fetch period
 
 
 ## Operational Notes
