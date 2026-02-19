@@ -39,6 +39,13 @@ function isTodayJakarta(unixTimestamp) {
   return postDateJakarta === todayJakarta;
 }
 
+function normalizeHandle(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^@+/, "")
+    .toLowerCase();
+}
+
 async function getShortcodesToday(clientId = null) {
   const today = new Date();
   const yyyy = today.getFullYear();
@@ -92,6 +99,66 @@ async function deleteShortcodes(shortcodesToDelete, clientId = null) {
     });
   }
   await query(sql, params);
+}
+
+async function filterOfficialInstagramShortcodes(shortcodes = [], clientId = null) {
+  if (!shortcodes.length) return [];
+
+  const normalizedClientId = String(clientId || "").trim();
+  if (!normalizedClientId) {
+    return [];
+  }
+
+  const officialRes = await query(
+    `SELECT client_insta FROM clients WHERE client_id = $1 LIMIT 1`,
+    [normalizedClientId]
+  );
+
+  const officialUsername = normalizeHandle(officialRes.rows[0]?.client_insta);
+  if (!officialUsername) {
+    sendDebug({
+      tag: "IG SYNC",
+      msg: `Lewati auto-delete: username resmi client ${normalizedClientId} tidak ditemukan.`,
+      client_id: normalizedClientId,
+    });
+    return [];
+  }
+
+  const hasExtendedPosts = await tableExists("ig_ext_posts");
+  const hasExtendedUsers = await tableExists("ig_ext_users");
+  if (!hasExtendedPosts || !hasExtendedUsers) {
+    sendDebug({
+      tag: "IG SYNC",
+      msg: `Lewati auto-delete: tabel ig_ext_posts/ig_ext_users belum tersedia untuk validasi akun resmi ${normalizedClientId}.`,
+      client_id: normalizedClientId,
+    });
+    return [];
+  }
+
+  const usernameRes = await query(
+    `SELECT p.shortcode, u.username
+       FROM insta_post p
+       LEFT JOIN ig_ext_posts ep ON ep.shortcode = p.shortcode
+       LEFT JOIN ig_ext_users u ON u.user_id = ep.user_id
+      WHERE p.shortcode = ANY($1)
+        AND p.client_id = $2`,
+    [shortcodes, normalizedClientId]
+  );
+
+  const safeToDelete = usernameRes.rows
+    .filter((row) => normalizeHandle(row.username) === officialUsername)
+    .map((row) => row.shortcode);
+
+  const skippedCount = shortcodes.length - safeToDelete.length;
+  if (skippedCount > 0) {
+    sendDebug({
+      tag: "IG SYNC",
+      msg: `Lewati ${skippedCount} shortcode non-resmi/manual untuk client ${normalizedClientId}.`,
+      client_id: normalizedClientId,
+    });
+  }
+
+  return safeToDelete;
 }
 
 async function getEligibleClients() {
@@ -276,12 +343,16 @@ export async function fetchAndStoreInstaContent(
     );
 
     if (hasSuccessfulFetch) {
+      const safeShortcodesToDelete = await filterOfficialInstagramShortcodes(
+        shortcodesToDelete,
+        client.id
+      );
       sendDebug({
         tag: "IG SYNC",
-        msg: `Akan menghapus shortcodes yang tidak ada hari ini: jumlah=${shortcodesToDelete.length}`,
+        msg: `Akan menghapus shortcodes akun resmi yang tidak ada hari ini: jumlah=${safeShortcodesToDelete.length}`,
         client_id: client.id
       });
-      await deleteShortcodes(shortcodesToDelete, client.id);
+      await deleteShortcodes(safeShortcodesToDelete, client.id);
     } else {
       sendDebug({
         tag: "IG SYNC",
