@@ -13,9 +13,10 @@ GET /api/insta/posts?client_id=KEDIRI
 ```
 
 ### Catatan Perilaku
-- Data yang dikembalikan hanya post dengan `created_at` pada tanggal hari ini (Asia/Jakarta).
+- Data yang dikembalikan hanya post dengan `created_at` pada tanggal hari ini berbasis **WIB (Asia/Jakarta)**, menggunakan evaluasi SQL: `(created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date`.
 - Response mengikuti format `sendSuccess` (lihat `src/utils/response.js`).
 - Sinkronisasi cron fetch post akan menghapus konten hari ini yang tidak lagi ada di hasil fetch, termasuk membersihkan data terkait (likes, komentar, dan audit like) agar tidak terkena kendala foreign key saat post dihapus.
+- Seluruh proses sinkronisasi “hari ini” pada modul fetch (pengambilan shortcode hari ini, delete kandidat hari ini, dan summary harian) juga memakai basis tanggal **WIB (Asia/Jakarta)** yang sama.
 - Penghapusan otomatis hanya berlaku untuk konten dari **username akun resmi** yang tersimpan di tabel `clients` (`client_insta` untuk Instagram, `client_tiktok`/`tiktok_secuid` untuk TikTok). Konten hasil input manual/non-resmi tidak dihapus otomatis oleh proses sinkronisasi.
 - Modul fetch IG menyimpan metadata fetch terstruktur pada log (`IG FETCH META`/`IG SAFE DELETE`) yang mencakup jumlah item mentah, status API, durasi fetch, kode error, jumlah duplikat, dan indikator inkonsistensi.
 - Aturan **safe delete** pada sinkronisasi fetch IG:
