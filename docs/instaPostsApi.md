@@ -17,6 +17,11 @@ GET /api/insta/posts?client_id=KEDIRI
 - Response mengikuti format `sendSuccess` (lihat `src/utils/response.js`).
 - Sinkronisasi cron fetch post akan menghapus konten hari ini yang tidak lagi ada di hasil fetch, termasuk membersihkan data terkait (likes, komentar, dan audit like) agar tidak terkena kendala foreign key saat post dihapus.
 - Penghapusan otomatis hanya berlaku untuk konten dari **username akun resmi** yang tersimpan di tabel `clients` (`client_insta` untuk Instagram, `client_tiktok`/`tiktok_secuid` untuk TikTok). Konten hasil input manual/non-resmi tidak dihapus otomatis oleh proses sinkronisasi.
+- Modul fetch IG menyimpan metadata fetch terstruktur pada log (`IG FETCH META`/`IG SAFE DELETE`) yang mencakup jumlah item mentah, status API, durasi fetch, kode error, jumlah duplikat, dan indikator inkonsistensi.
+- Aturan **safe delete** pada sinkronisasi fetch IG:
+  - Delete otomatis di-skip bila ada indikasi response parsial (flag partial error, item mentah turun drastis dibanding run sebelumnya, shortcode duplikat, atau item tidak konsisten).
+  - Delete otomatis ditunda bila kandidat hapus melebihi ambang aman client (`IG_SAFE_DELETE_THRESHOLD_PERCENT`, default 40%, dapat dioverride per client via `IG_SAFE_DELETE_THRESHOLD_BY_CLIENT`).
+  - Setiap keputusan delete (dijalankan/ditunda/di-skip) ditulis ke audit trail log terstruktur agar alasan keputusan bisa ditelusuri.
 
 ## GET /api/instagram/posts
 
