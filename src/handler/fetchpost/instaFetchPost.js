@@ -15,6 +15,29 @@ const ADMIN_WHATSAPP = (process.env.ADMIN_WHATSAPP || "")
   .filter(Boolean);
 
 const limit = pLimit(6);
+const previousFetchMetadataByClient = new Map();
+
+const DEFAULT_SAFE_DELETE_THRESHOLD_PERCENT = Number(
+  process.env.IG_SAFE_DELETE_THRESHOLD_PERCENT || 40
+);
+
+const RAW_DROP_ALERT_PERCENT = Number(process.env.IG_RAW_DROP_ALERT_PERCENT || 60);
+
+const safeDeleteThresholdPercentByClient = (() => {
+  const rawConfig = process.env.IG_SAFE_DELETE_THRESHOLD_BY_CLIENT;
+  if (!rawConfig) return {};
+  try {
+    const parsed = JSON.parse(rawConfig);
+    if (!parsed || typeof parsed !== "object") return {};
+    return parsed;
+  } catch {
+    sendDebug({
+      tag: "IG SAFE DELETE",
+      msg: "Konfigurasi IG_SAFE_DELETE_THRESHOLD_BY_CLIENT tidak valid JSON, fallback ke default.",
+    });
+    return {};
+  }
+})();
 
 /**
  * Utility: Cek apakah unixTimestamp adalah hari ini (Asia/Jakarta)
@@ -44,6 +67,78 @@ function normalizeHandle(value) {
     .trim()
     .replace(/^@+/, "")
     .toLowerCase();
+}
+
+function getSafeDeleteThresholdPercent(clientId) {
+  const clientThreshold = Number(safeDeleteThresholdPercentByClient?.[clientId]);
+  if (Number.isFinite(clientThreshold) && clientThreshold >= 0) {
+    return clientThreshold;
+  }
+  if (
+    Number.isFinite(DEFAULT_SAFE_DELETE_THRESHOLD_PERCENT) &&
+    DEFAULT_SAFE_DELETE_THRESHOLD_PERCENT >= 0
+  ) {
+    return DEFAULT_SAFE_DELETE_THRESHOLD_PERCENT;
+  }
+  return 40;
+}
+
+function createFetchMetadata({
+  clientId,
+  username,
+  rawItems,
+  durationMs,
+  apiStatus,
+  errorCode = null,
+  partialErrorFlag = false,
+}) {
+  const rawArray = Array.isArray(rawItems) ? rawItems : [];
+  const shortcodeList = rawArray.map((post) => String(post?.code || "").trim()).filter(Boolean);
+  const uniqueShortcodes = new Set(shortcodeList);
+  const duplicateCount = shortcodeList.length - uniqueShortcodes.size;
+  const inconsistentCount = rawArray.filter((post) => !post?.code || !post?.taken_at).length;
+
+  const previousMetadata = previousFetchMetadataByClient.get(clientId);
+  const previousRawCount = previousMetadata?.rawItemCount || 0;
+  const dropPercent = previousRawCount > 0
+    ? Number((((previousRawCount - rawArray.length) / previousRawCount) * 100).toFixed(2))
+    : 0;
+  const hasDrasticDrop = previousRawCount > 0 && dropPercent >= RAW_DROP_ALERT_PERCENT;
+
+  return {
+    clientId,
+    username,
+    apiStatus,
+    errorCode,
+    durationMs,
+    rawItemCount: rawArray.length,
+    duplicateCount,
+    inconsistentCount,
+    partialErrorFlag: Boolean(partialErrorFlag),
+    previousRawItemCount: previousRawCount,
+    rawDropPercent: dropPercent,
+    hasDrasticDrop,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function shouldSkipDeleteForPartialResponse(fetchMetadata) {
+  const reasons = [];
+  if (fetchMetadata.partialErrorFlag) reasons.push("partial_error_flag");
+  if (fetchMetadata.hasDrasticDrop) reasons.push("raw_items_drop_drastic");
+  if (fetchMetadata.duplicateCount > 0) reasons.push("duplicate_shortcode_detected");
+  if (fetchMetadata.inconsistentCount > 0) reasons.push("inconsistent_item_detected");
+  return {
+    shouldSkip: reasons.length > 0,
+    reasons,
+  };
+}
+
+function toSafeDeleteAuditLog(payload) {
+  return JSON.stringify({
+    event: "ig_safe_delete",
+    ...payload,
+  });
 }
 
 async function getShortcodesToday(clientId = null) {
@@ -220,7 +315,11 @@ export async function fetchAndStoreInstaContent(
     let fetchedShortcodesToday = [];
     let hasSuccessfulFetch = false;
     const username = client.client_insta;
-    let postsRes;
+    let postsRes = [];
+    const fetchStartedAt = Date.now();
+    let fetchApiStatus = "success";
+    let fetchErrorCode = null;
+    let partialErrorFlag = false;
     try {
       sendDebug({
         tag: "IG FETCH",
@@ -233,13 +332,66 @@ export async function fetchAndStoreInstaContent(
         client_id: client.id
       });
     } catch (err) {
+      fetchApiStatus = "error";
+      fetchErrorCode =
+        err?.code ||
+        err?.statusCode ||
+        err?.response?.status ||
+        "UNKNOWN_API_ERROR";
+      const fetchDurationMs = Date.now() - fetchStartedAt;
+      const failedFetchMetadata = createFetchMetadata({
+        clientId: client.id,
+        username,
+        rawItems: [],
+        durationMs: fetchDurationMs,
+        apiStatus: fetchApiStatus,
+        errorCode: fetchErrorCode,
+        partialErrorFlag: true,
+      });
+      previousFetchMetadataByClient.set(client.id, failedFetchMetadata);
       sendDebug({
         tag: "IG POST ERROR",
         msg: err.response?.data ? JSON.stringify(err.response.data) : err.message,
         client_id: client.id
       });
+      sendDebug({
+        tag: "IG FETCH META",
+        msg: toSafeDeleteAuditLog({
+          action: "fetch_failed",
+          metadata: failedFetchMetadata,
+        }),
+        client_id: client.id,
+      });
       continue;
     }
+
+    if (!Array.isArray(postsRes)) {
+      fetchApiStatus = "partial";
+      partialErrorFlag = true;
+      postsRes = [];
+    }
+
+    const fetchDurationMs = Date.now() - fetchStartedAt;
+    const fetchMetadata = createFetchMetadata({
+      clientId: client.id,
+      username,
+      rawItems: postsRes,
+      durationMs: fetchDurationMs,
+      apiStatus: fetchApiStatus,
+      errorCode: fetchErrorCode,
+      partialErrorFlag,
+    });
+
+    previousFetchMetadataByClient.set(client.id, fetchMetadata);
+    sendDebug({
+      tag: "IG FETCH META",
+      msg: toSafeDeleteAuditLog({
+        action: "fetch_completed",
+        metadata: fetchMetadata,
+      }),
+      client_id: client.id,
+    });
+
     // ==== FILTER HANYA KONTEN YANG DI-POST HARI INI ====
     const items = Array.isArray(postsRes)
       ? postsRes.filter((post) => isTodayJakarta(post.taken_at))
@@ -343,21 +495,87 @@ export async function fetchAndStoreInstaContent(
     );
 
     if (hasSuccessfulFetch) {
+      const partialGuard = shouldSkipDeleteForPartialResponse(fetchMetadata);
+      if (partialGuard.shouldSkip) {
+        sendDebug({
+          tag: "IG SAFE DELETE",
+          msg: toSafeDeleteAuditLog({
+            action: "delete_skipped_partial_guard",
+            reasons: partialGuard.reasons,
+            metadata: fetchMetadata,
+            dbShortcodesToday: dbShortcodesToday.length,
+            fetchedShortcodesToday: fetchedShortcodesToday.length,
+            deleteCandidates: shortcodesToDelete.length,
+          }),
+          client_id: client.id,
+        });
+      } else {
+
       const safeShortcodesToDelete = await filterOfficialInstagramShortcodes(
         shortcodesToDelete,
         client.id
       );
+
+      const thresholdPercent = getSafeDeleteThresholdPercent(client.id);
+      const dbCountToday = dbShortcodesToday.length;
+      const deletePercentOfDb = dbCountToday > 0
+        ? Number(((safeShortcodesToDelete.length / dbCountToday) * 100).toFixed(2))
+        : 0;
+      const exceedsThreshold = dbCountToday > 0 && deletePercentOfDb > thresholdPercent;
+
+      if (exceedsThreshold) {
+        sendDebug({
+          tag: "IG SAFE DELETE",
+          msg: toSafeDeleteAuditLog({
+            action: "delete_deferred_threshold",
+            reason: "delete_candidate_exceeds_threshold",
+            thresholdPercent,
+            deletePercentOfDb,
+            dbShortcodesToday: dbCountToday,
+            deleteCandidates: safeShortcodesToDelete.length,
+            metadata: fetchMetadata,
+          }),
+          client_id: client.id,
+        });
+      } else {
+
       sendDebug({
         tag: "IG SYNC",
         msg: `Akan menghapus shortcodes akun resmi yang tidak ada hari ini: jumlah=${safeShortcodesToDelete.length}`,
         client_id: client.id
       });
+
+      sendDebug({
+        tag: "IG SAFE DELETE",
+        msg: toSafeDeleteAuditLog({
+          action: "delete_execute",
+          thresholdPercent,
+          deletePercentOfDb,
+          dbShortcodesToday: dbCountToday,
+          fetchedShortcodesToday: fetchedShortcodesToday.length,
+          deleteCandidates: safeShortcodesToDelete.length,
+          metadata: fetchMetadata,
+        }),
+        client_id: client.id,
+      });
+
       await deleteShortcodes(safeShortcodesToDelete, client.id);
+      }
+      }
     } else {
       sendDebug({
         tag: "IG SYNC",
         msg: `Tidak ada fetch IG berhasil untuk client ${client.id}, database tidak dihapus`,
         client_id: client.id
+      });
+
+      sendDebug({
+        tag: "IG SAFE DELETE",
+        msg: toSafeDeleteAuditLog({
+          action: "delete_skipped_no_successful_fetch",
+          metadata: previousFetchMetadataByClient.get(client.id),
+        }),
+        client_id: client.id,
       });
     }
 
