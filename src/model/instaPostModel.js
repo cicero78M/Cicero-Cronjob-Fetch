@@ -204,8 +204,9 @@ export async function getPostsTodayByClient(client_id) {
               ELSE 0
             END AS like_count
      FROM insta_post p
+     JOIN insta_post_clients pc ON pc.shortcode = p.shortcode
      LEFT JOIN insta_like il ON il.shortcode = p.shortcode
-     WHERE LOWER(client_id) = LOWER($1)
+     WHERE LOWER(pc.client_id) = LOWER($1)
        AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date
      ORDER BY p.created_at ASC`,
     [client_id]
@@ -215,10 +216,11 @@ export async function getPostsTodayByClient(client_id) {
 
 export async function getPostsByClientId(clientId) {
   const res = await query(
-    `SELECT DISTINCT ON (shortcode) *
-     FROM insta_post
-     WHERE client_id = $1
-     ORDER BY shortcode, created_at DESC`,
+    `SELECT DISTINCT p.*
+     FROM insta_post p
+     JOIN insta_post_clients pc ON pc.shortcode = p.shortcode
+     WHERE pc.client_id = $1
+     ORDER BY p.shortcode, p.created_at DESC`,
     [clientId]
   );
   return res.rows;
@@ -307,12 +309,17 @@ export async function getPostsByFilters(
       const roleIdx = addParam(normalizedRole);
       whereClauses.push(`LOWER(TRIM(pr.role_name)) = LOWER(${roleIdx})`);
     } else if (normalizedClientId) {
+      joins.push('JOIN insta_post_clients pc ON pc.shortcode = p.shortcode');
       const clientIdx = addParam(normalizedClientId);
-      whereClauses.push(`LOWER(TRIM(p.client_id)) = LOWER(${clientIdx})`);
+      whereClauses.push(`LOWER(TRIM(pc.client_id)) = LOWER(${clientIdx})`);
     }
 
     if (normalizedRegionalId) {
-      joins.push('JOIN clients c ON c.client_id = p.client_id');
+      // Join to clients via insta_post_clients if not already joined
+      if (!joins.some(j => j.includes('insta_post_clients'))) {
+        joins.push('JOIN insta_post_clients pc ON pc.shortcode = p.shortcode');
+      }
+      joins.push('JOIN clients c ON c.client_id = pc.client_id');
       const regionalIdx = addParam(normalizedRegionalId);
       whereClauses.push(`UPPER(c.regional_id) = ${regionalIdx}`);
     }
@@ -436,12 +443,17 @@ export async function countPostsByClient(
       const roleIdx = addParam(normalizedRole);
       whereClauses.push(`LOWER(TRIM(pr.role_name)) = LOWER(${roleIdx})`);
     } else if (resolvedClientId) {
+      joins.push('JOIN insta_post_clients pc ON pc.shortcode = p.shortcode');
       const clientIdx = addParam(resolvedClientId);
-      whereClauses.push(`LOWER(TRIM(p.client_id)) = LOWER(${clientIdx})`);
+      whereClauses.push(`LOWER(TRIM(pc.client_id)) = LOWER(${clientIdx})`);
     }
 
     if (normalizedRegionalId) {
-      joins.push('JOIN clients c ON c.client_id = p.client_id');
+      // Join to clients via insta_post_clients if not already joined
+      if (!joins.some(j => j.includes('insta_post_clients'))) {
+        joins.push('JOIN insta_post_clients pc ON pc.shortcode = p.shortcode');
+      }
+      joins.push('JOIN clients c ON c.client_id = pc.client_id');
       const regionalIdx = addParam(normalizedRegionalId);
       whereClauses.push(`UPPER(c.regional_id) = ${regionalIdx}`);
     }

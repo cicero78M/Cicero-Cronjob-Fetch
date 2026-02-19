@@ -7,6 +7,7 @@ import { fetchInstagramPosts, fetchInstagramPostInfo } from "../../service/insta
 import { savePostWithMedia } from "../../model/instaPostExtendedModel.js";
 import { upsertInstaPost as upsertInstaPostKhusus } from "../../model/instaPostKhususModel.js";
 import { upsertInstaPost } from "../../model/instaPostModel.js";
+import { addClientToPost } from "../../model/instaPostClientsModel.js";
 import { extractInstagramShortcode } from "../../utils/utilsHelper.js";
 
 const ADMIN_WHATSAPP = (process.env.ADMIN_WHATSAPP || "")
@@ -142,15 +143,24 @@ function toSafeDeleteAuditLog(payload) {
 }
 
 async function getShortcodesToday(clientId = null) {
-  let sql =
-    "SELECT shortcode FROM insta_post WHERE (created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date";
-  const params = [];
   if (clientId) {
-    sql += " AND client_id = $1";
-    params.push(clientId);
+    // Use junction table for client-specific shortcodes
+    const res = await query(
+      `SELECT pc.shortcode 
+       FROM insta_post_clients pc
+       JOIN insta_post p ON p.shortcode = pc.shortcode
+       WHERE pc.client_id = $1 
+         AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date`,
+      [clientId]
+    );
+    return res.rows.map((r) => r.shortcode);
+  } else {
+    // Get all shortcodes for today (no client filter)
+    const res = await query(
+      "SELECT shortcode FROM insta_post WHERE (created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date"
+    );
+    return res.rows.map((r) => r.shortcode);
   }
-  const res = await query(sql, params);
-  return res.rows.map((r) => r.shortcode);
 }
 
 async function tableExists(tableName) {
@@ -162,31 +172,66 @@ async function tableExists(tableName) {
 
 async function deleteShortcodes(shortcodesToDelete, clientId = null) {
   if (!shortcodesToDelete.length) return;
-  // ig_ext_posts rows cascade when insta_post entries are deleted
-  let sql =
-    "DELETE FROM insta_post WHERE shortcode = ANY($1) AND (created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date";
-  const params = [shortcodesToDelete];
+  
   if (clientId) {
-    sql += " AND client_id = $2";
-    params.push(clientId);
-  }
-  await query(`DELETE FROM insta_like_audit WHERE shortcode = ANY($1)`, [
-    shortcodesToDelete,
-  ]);
-  await query(`DELETE FROM insta_like WHERE shortcode = ANY($1)`, [
-    shortcodesToDelete,
-  ]);
-  if (await tableExists("insta_comment")) {
-    await query(`DELETE FROM insta_comment WHERE shortcode = ANY($1)`, [
-      shortcodesToDelete,
-    ]);
+    // For client-specific delete: remove from junction table only
+    // The post will be deleted via CASCADE only if this was the last client
+    await query(
+      `DELETE FROM insta_post_clients 
+       WHERE shortcode = ANY($1) AND client_id = $2`,
+      [shortcodesToDelete, clientId]
+    );
+    
+    // Find shortcodes that no longer have any clients
+    const orphanedRes = await query(
+      `SELECT DISTINCT p.shortcode 
+       FROM insta_post p
+       WHERE p.shortcode = ANY($1)
+         AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date
+         AND NOT EXISTS (
+           SELECT 1 FROM insta_post_clients pc 
+           WHERE pc.shortcode = p.shortcode
+         )`,
+      [shortcodesToDelete]
+    );
+    const orphanedShortcodes = orphanedRes.rows.map((r) => r.shortcode);
+    
+    if (orphanedShortcodes.length > 0) {
+      sendDebug({
+        tag: "IG SYNC",
+        msg: `Menghapus ${orphanedShortcodes.length} post yang tidak lagi dikaitkan dengan client manapun`,
+        client_id: clientId
+      });
+      
+      // Delete orphaned posts and their related data
+      await query(`DELETE FROM insta_like_audit WHERE shortcode = ANY($1)`, [orphanedShortcodes]);
+      await query(`DELETE FROM insta_like WHERE shortcode = ANY($1)`, [orphanedShortcodes]);
+      if (await tableExists("insta_comment")) {
+        await query(`DELETE FROM insta_comment WHERE shortcode = ANY($1)`, [orphanedShortcodes]);
+      }
+      // ig_ext_posts rows cascade when insta_post entries are deleted
+      await query(
+        `DELETE FROM insta_post 
+         WHERE shortcode = ANY($1) 
+           AND (created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date`,
+        [orphanedShortcodes]
+      );
+    }
   } else {
-    sendDebug({
-      tag: "IG FETCH",
-      msg: "Skip delete from insta_comment: table not found.",
-    });
+    // Global delete (no client specified) - delete all
+    await query(`DELETE FROM insta_like_audit WHERE shortcode = ANY($1)`, [shortcodesToDelete]);
+    await query(`DELETE FROM insta_like WHERE shortcode = ANY($1)`, [shortcodesToDelete]);
+    if (await tableExists("insta_comment")) {
+      await query(`DELETE FROM insta_comment WHERE shortcode = ANY($1)`, [shortcodesToDelete]);
+    }
+    // This will cascade delete from insta_post_clients via ON DELETE CASCADE
+    await query(
+      `DELETE FROM insta_post 
+       WHERE shortcode = ANY($1) 
+         AND (created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date`,
+      [shortcodesToDelete]
+    );
   }
-  await query(sql, params);
 }
 
 async function filterOfficialInstagramShortcodes(shortcodes = [], clientId = null) {
@@ -226,10 +271,11 @@ async function filterOfficialInstagramShortcodes(shortcodes = [], clientId = nul
   const usernameRes = await query(
     `SELECT p.shortcode, u.username
        FROM insta_post p
+       JOIN insta_post_clients pc ON pc.shortcode = p.shortcode
        LEFT JOIN ig_ext_posts ep ON ep.shortcode = p.shortcode
        LEFT JOIN ig_ext_users u ON u.user_id = ep.user_id
       WHERE p.shortcode = ANY($1)
-        AND p.client_id = $2`,
+        AND pc.client_id = $2`,
     [shortcodes, normalizedClientId]
   );
 
@@ -442,8 +488,7 @@ export async function fetchAndStoreInstaContent(
         `INSERT INTO insta_post (client_id, shortcode, caption, comment_count, like_count, thumbnail_url, is_video, video_url, image_url, images_url, is_carousel, created_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,to_timestamp($12))
          ON CONFLICT (shortcode) DO UPDATE
-          SET client_id = EXCLUDED.client_id,
-              caption = EXCLUDED.caption,
+          SET caption = EXCLUDED.caption,
               comment_count = EXCLUDED.comment_count,
               like_count = EXCLUDED.like_count,
               thumbnail_url = EXCLUDED.thumbnail_url,
@@ -452,7 +497,7 @@ export async function fetchAndStoreInstaContent(
               image_url = EXCLUDED.image_url,
               images_url = EXCLUDED.images_url,
               is_carousel = EXCLUDED.is_carousel,
-             created_at = to_timestamp($12)`,
+              created_at = to_timestamp($12)`,
         [
           toSave.client_id,
           toSave.shortcode,
@@ -468,6 +513,10 @@ export async function fetchAndStoreInstaContent(
           post.taken_at,
         ]
       );
+      
+      // Add client to junction table (supports collaboration posts)
+      await addClientToPost(toSave.shortcode, client.id);
+      
       sendDebug({
         tag: "IG FETCH",
         msg: `[DB] Sukses upsert IG post: ${toSave.shortcode}`,
@@ -656,6 +705,8 @@ export async function fetchSinglePostKhusus(linkOrCode, clientId) {
   }; 
   await upsertInstaPostKhusus(data);
   await upsertInstaPost(data);
+  // Add client to junction table (supports collaboration posts)
+  await addClientToPost(code, clientId);
   try {
     await savePostWithMedia(info);
   } catch (e) {
