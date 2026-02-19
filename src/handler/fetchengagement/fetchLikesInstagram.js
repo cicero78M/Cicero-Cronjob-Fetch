@@ -143,7 +143,10 @@ export async function handleFetchLikesInstagram(waClient, chatId, client_id, opt
     const mm = String(today.getMonth() + 1).padStart(2, "0");
     const dd = String(today.getDate()).padStart(2, "0");
     const { rows } = await query(
-      `SELECT shortcode FROM insta_post WHERE client_id = $1 AND DATE(created_at) = $2`,
+      `SELECT p.shortcode 
+       FROM insta_post p
+       JOIN insta_post_clients pc ON pc.shortcode = p.shortcode
+       WHERE pc.client_id = $1 AND DATE(p.created_at) = $2`,
       [client_id, `${yyyy}-${mm}-${dd}`]
     );
 
