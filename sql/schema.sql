@@ -223,6 +223,16 @@ CREATE TABLE insta_post (
   created_at TIMESTAMP
 );
 
+CREATE TABLE insta_post_clients (
+  shortcode VARCHAR NOT NULL REFERENCES insta_post(shortcode) ON DELETE CASCADE,
+  client_id VARCHAR NOT NULL REFERENCES clients(client_id) ON DELETE CASCADE,
+  created_at TIMESTAMP DEFAULT NOW(),
+  PRIMARY KEY (shortcode, client_id)
+);
+
+CREATE INDEX idx_insta_post_clients_client_id ON insta_post_clients(client_id);
+CREATE INDEX idx_insta_post_clients_shortcode ON insta_post_clients(shortcode);
+
 CREATE TABLE insta_post_roles (
   shortcode VARCHAR REFERENCES insta_post(shortcode) ON DELETE CASCADE,
   role_name VARCHAR NOT NULL,

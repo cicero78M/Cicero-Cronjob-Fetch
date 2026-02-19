@@ -330,6 +330,7 @@ export async function getRekapLinkByClient(
 
   const buildPostFilters = (sharedClientIdx = null, sharedRoleIdx = null) => {
     let postClientFilter = '1=1';
+    let postClientJoin = '';
     let postRoleJoin = '';
     let postRoleFilter = '';
     let postRegionalJoin = '';
@@ -338,24 +339,34 @@ export async function getRekapLinkByClient(
     if (resolvedPostClientId) {
       const postClientIdx =
         sharedClientIdx ?? addParam(resolvedPostClientId);
-      postClientFilter = `LOWER(p.client_id) = LOWER($${postClientIdx})`;
+      postClientJoin = 'JOIN insta_post_clients pc ON pc.shortcode = p.shortcode';
+      postClientFilter = `LOWER(pc.client_id) = LOWER($${postClientIdx})`;
     }
 
     if (shouldIncludeRoleFilter && resolvedPostRoleName) {
       const roleIdx = sharedRoleIdx ?? addParam(resolvedPostRoleName);
       const roleFilterCondition =
-        `LOWER(p.client_id) = LOWER($${roleIdx}) OR LOWER(pr.role_name) = LOWER($${roleIdx})`;
+        `LOWER(pc.client_id) = LOWER($${roleIdx}) OR LOWER(pr.role_name) = LOWER($${roleIdx})`;
       postRoleJoin = 'LEFT JOIN insta_post_roles pr ON pr.shortcode = p.shortcode';
       postRoleFilter = `AND (${roleFilterCondition})`;
+      // Ensure junction table is joined if not already
+      if (!postClientJoin) {
+        postClientJoin = 'LEFT JOIN insta_post_clients pc ON pc.shortcode = p.shortcode';
+      }
     }
 
     if (regionalParamIdx !== null) {
-      postRegionalJoin = 'JOIN clients cp ON cp.client_id = p.client_id';
+      // Join to clients via junction table if not already joined
+      if (!postClientJoin) {
+        postClientJoin = 'JOIN insta_post_clients pc ON pc.shortcode = p.shortcode';
+      }
+      postRegionalJoin = 'JOIN clients cp ON cp.client_id = pc.client_id';
       postRegionalFilter = `AND UPPER(cp.regional_id) = UPPER($${regionalParamIdx})`;
     }
 
     return {
       postClientFilter,
+      postClientJoin,
       postRoleJoin,
       postRoleFilter,
       postRegionalJoin,
@@ -365,6 +376,7 @@ export async function getRekapLinkByClient(
 
   const {
     postClientFilter,
+    postClientJoin,
     postRoleJoin,
     postRoleFilter,
     postRegionalJoin,
@@ -380,7 +392,7 @@ export async function getRekapLinkByClient(
     : '';
 
   const { rows: postRows } = await query(
-    `SELECT COUNT(*) AS jumlah_post FROM insta_post p ${postRegionalJoin} ${postRoleJoin}
+    `SELECT COUNT(*) AS jumlah_post FROM insta_post p ${postClientJoin} ${postRegionalJoin} ${postRoleJoin}
      WHERE ${postClientFilter} ${postRoleFilter} ${postRegionalFilter} AND ${dateFilterPost}`,
     params
   );
@@ -493,8 +505,9 @@ export async function getReportsThisMonthByClient(client_id) {
        r.youtube_link AS youtube
      FROM link_report r
      JOIN insta_post p ON p.shortcode = r.shortcode
+     JOIN insta_post_clients pc ON pc.shortcode = p.shortcode
      JOIN "user" u ON u.user_id = r.user_id
-     WHERE p.client_id = $1
+     WHERE pc.client_id = $1
        AND date_trunc('month', r.created_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('month', NOW() AT TIME ZONE 'Asia/Jakarta')
      ORDER BY r.created_at ASC`,
     [client_id]
@@ -517,8 +530,9 @@ export async function getReportsPrevMonthByClient(client_id) {
        r.youtube_link AS youtube
      FROM link_report r
      JOIN insta_post p ON p.shortcode = r.shortcode
+     JOIN insta_post_clients pc ON pc.shortcode = p.shortcode
      JOIN "user" u ON u.user_id = r.user_id
-     WHERE p.client_id = $1
+     WHERE pc.client_id = $1
        AND date_trunc('month', r.created_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('month', (NOW() AT TIME ZONE 'Asia/Jakarta') - INTERVAL '1 month')
      ORDER BY r.created_at ASC`,
     [client_id]

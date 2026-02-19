@@ -218,6 +218,7 @@ export async function hasUserLikedBetween(
     SELECT COUNT(DISTINCT p.shortcode) AS total_activity
     FROM insta_like l
     JOIN insta_post p ON p.shortcode = l.shortcode
+    ${clientParamIndex ? 'JOIN insta_post_clients pc ON pc.shortcode = p.shortcode' : ''}
     JOIN LATERAL (
       SELECT lower(replace(trim(
         COALESCE(elem->>'username', trim(both '"' FROM elem::text))
@@ -225,7 +226,7 @@ export async function hasUserLikedBetween(
       FROM jsonb_array_elements(COALESCE(l.likes, '[]'::jsonb)) AS elem
     ) AS liked ON liked.username = $1
     WHERE (p.created_at AT TIME ZONE 'Asia/Jakarta') BETWEEN $2::timestamptz AND COALESCE($3::timestamptz, NOW())
-      ${clientParamIndex ? `AND LOWER(p.client_id) = LOWER($${clientParamIndex})` : ''}
+      ${clientParamIndex ? `AND LOWER(pc.client_id) = LOWER($${clientParamIndex})` : ''}
   `;
 
   const { rows } = await query(queryText, params);
@@ -358,6 +359,7 @@ export async function getRekapLikesByClient(
     useOfficialAccounts = false
   ) => {
     let postClientFilter = '1=1';
+    let postClientJoin = '';
     let postRoleJoin = '';
     let postRoleFilter = '';
     let postRegionalJoin = '';
@@ -368,28 +370,41 @@ export async function getRekapLikesByClient(
     if (resolvedPostClientId) {
       const postClientIdx =
         sharedClientIdx ?? addParamFn(resolvedPostClientId);
-      postClientFilter = `LOWER(p.client_id) = LOWER($${postClientIdx})`;
+      postClientJoin = 'JOIN insta_post_clients pc ON pc.shortcode = p.shortcode';
+      postClientFilter = `LOWER(pc.client_id) = LOWER($${postClientIdx})`;
     }
 
     if (shouldIncludeRoleFilter && resolvedPostRoleName) {
       const roleIdx = sharedRoleIdx ?? addParamFn(resolvedPostRoleName);
       const roleFilterCondition =
-        `LOWER(p.client_id) = LOWER($${roleIdx}) OR LOWER(pr.role_name) = LOWER($${roleIdx})`;
+        `LOWER(pc.client_id) = LOWER($${roleIdx}) OR LOWER(pr.role_name) = LOWER($${roleIdx})`;
       postRoleJoin = 'LEFT JOIN insta_post_roles pr ON pr.shortcode = p.shortcode';
       postRoleFilter = `AND (${roleFilterCondition})`;
+      // Ensure junction table is joined if not already
+      if (!postClientJoin) {
+        postClientJoin = 'LEFT JOIN insta_post_clients pc ON pc.shortcode = p.shortcode';
+      }
     }
 
     if (normalizedRegionalId) {
       const regionalIdx = addParamFn(normalizedRegionalId);
-      postRegionalJoin = 'JOIN clients cp ON cp.client_id = p.client_id';
+      // Join to clients via junction table if not already joined
+      if (!postClientJoin) {
+        postClientJoin = 'JOIN insta_post_clients pc ON pc.shortcode = p.shortcode';
+      }
+      postRegionalJoin = 'JOIN clients cp ON cp.client_id = pc.client_id';
       postRegionalFilter = `AND UPPER(cp.regional_id) = UPPER($${regionalIdx})`;
     }
 
     if (useOfficialAccounts) {
+      // Join via junction table for official accounts
+      if (!postClientJoin) {
+        postClientJoin = 'JOIN insta_post_clients pc ON pc.shortcode = p.shortcode';
+      }
       postOfficialJoin = `
       JOIN satbinmas_official_media som
         ON som.code = p.shortcode
-       AND LOWER(som.client_id) = LOWER(p.client_id)
+       AND LOWER(som.client_id) = LOWER(pc.client_id)
       JOIN satbinmas_official_accounts soa
         ON soa.satbinmas_account_id = som.satbinmas_account_id`;
       postOfficialFilter =
@@ -398,6 +413,7 @@ export async function getRekapLikesByClient(
 
     return {
       postClientFilter,
+      postClientJoin,
       postRoleJoin,
       postRoleFilter,
       postRegionalJoin,
@@ -409,6 +425,7 @@ export async function getRekapLikesByClient(
 
   const {
     postClientFilter,
+    postClientJoin,
     postRoleJoin: postRoleJoinLikes,
     postRoleFilter,
     postRegionalJoin: postRegionalJoinLikes,
@@ -423,6 +440,7 @@ export async function getRekapLikesByClient(
   );
   const {
     postClientFilter: postClientFilterPosts,
+    postClientJoin: postClientJoinPosts,
     postRoleJoin: postRoleJoinPosts,
     postRoleFilter: postRoleFilterPosts,
     postRegionalJoin: postRegionalJoinPosts,
@@ -487,10 +505,11 @@ export async function getRekapLikesByClient(
       SELECT
         l.shortcode,
         p.created_at,
-        p.client_id,
+        pc.client_id,
         lower(replace(trim(lk.username), '@', '')) AS username
       FROM insta_like l
       JOIN insta_post p ON p.shortcode = l.shortcode
+      ${postClientJoin}
       ${postRegionalJoinLikes}
       ${postRoleJoinLikes}
       ${postOfficialJoinLikes}
@@ -539,6 +558,7 @@ export async function getRekapLikesByClient(
     `WITH posts AS (
       SELECT p.shortcode
       FROM insta_post p
+      ${postClientJoinPosts}
       ${postRegionalJoinPosts}
       ${postRoleJoinPosts}
       ${postOfficialJoinPosts}
