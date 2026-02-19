@@ -152,7 +152,10 @@ Format group ID WhatsApp harus:
    - Jika ada pengurangan, hitung selisihnya
    - Ambil link report yang diupdate dalam 24 jam terakhir
 4. **Enqueue notifikasi ke outbox**:
-   - Trigger hanya saat ada perubahan signifikan (`hasNotableChanges`)
+   - Trigger saat ada perubahan signifikan **atau** slot hourly Jakarta baru
+   - Slot hourly dihitung lewat `buildJakartaHourlySlotKey()` dengan format `YYYY-MM-DD-HH@05`
+   - Jika menit runtime `< 05`, slot dibulatkan ke jam sebelumnya agar stabil
+   - Saat trigger hourly aktif, enqueue memakai `forceScheduled=true`
    - Simpan event ke `wa_notification_outbox` dengan status `pending` dan `idempotency_key`
    - Deduplikasi otomatis saat insert (`ON CONFLICT idempotency_key DO NOTHING`)
 5. **Worker kirim WhatsApp**:
@@ -170,10 +173,31 @@ Format group ID WhatsApp harus:
 Signature saat ini:
 
 ```js
-sendTugasNotification(waClient, clientId, changes)
+sendTugasNotification(waClient, clientId, changes, options)
 ```
 
-Tidak ada opsi `forceScheduled`; payload notifikasi hanya dibentuk dari perubahan aktual (`igAdded`, `tiktokAdded`, `igDeleted`, `tiktokDeleted`, `linkChanges`).
+`options` hanya menerima properti berikut:
+- `forceScheduled` (`boolean`, default `false`)
+
+Catatan: opsi count seperti `igCount` dan `tiktokCount` tidak lagi menjadi input API; total konten pada pesan scheduled dihitung langsung dari hasil fetch post harian.
+
+### Ringkasan `forceScheduled` pada payload
+
+- `forceScheduled=true`
+  - Dipakai untuk notifikasi hourly/scheduled (termasuk slot wajib 17:05).
+  - Pesan yang dibentuk adalah daftar tugas terjadwal (`formatScheduledTaskList`).
+  - Idempotency key menyertakan `scheduled` + `hourKey` agar maksimal satu event per jam per grup untuk payload yang sama.
+- `forceScheduled=false`
+  - Dipakai untuk notifikasi berbasis perubahan (`igAdded`, `tiktokAdded`, `igDeleted`, `tiktokDeleted`, `linkChanges`).
+  - Idempotency key memakai mode `change`.
+
+### Contoh timeline harian (enqueue vs send)
+
+1. `06:05` cron post-fetch berjalan, slot `...-06@05` dievaluasi.
+2. Bila syarat terpenuhi, sistem **enqueue** event ke `wa_notification_outbox` (belum mengirim WA langsung).
+3. `cronWaOutboxWorker` (tiap menit) claim event `pending/retrying`, kirim ke WA gateway, lalu update status `sent/retrying/dead_letter`.
+4. `06:30` tetap berada di slot `...-06@05`; bila `last_notified_slot` sudah sama dan tidak ada perubahan baru, tidak enqueue scheduled ulang.
+5. `17:05` run wajib post-fetch tetap dievaluasi sebagai slot hourly; saat slot baru, `forceScheduled=true` memastikan pesan daftar tugas tetap terbuat walau tanpa perubahan data.
 
 ## Troubleshooting
 
@@ -282,8 +306,9 @@ State sekarang dipersistenkan ke tabel PostgreSQL `wa_notification_scheduler_sta
 1. Saat run dimulai, worker memuat state semua `client_id` aktif dari database.
 2. Worker tetap menjalankan fetch post + refresh engagement seperti biasa.
 3. Setelah fetch selesai, perubahan dihitung dari state tersimpan vs hitungan terbaru.
-4. Jika notifikasi berhasil di-enqueue, worker outbox menangani pengiriman WA secara asinkron.
-5. State scheduler terbaru di-upsert per client (query `INSERT ... ON CONFLICT ... DO UPDATE`) untuk menjaga baseline count tetap konsisten.
+4. Worker membentuk `currentSlotKey` berbasis waktu Jakarta (`YYYY-MM-DD-HH@05`) dan membandingkannya dengan `last_notified_slot`.
+5. Jika notifikasi berhasil di-enqueue, `last_notified_at` dan `last_notified_slot` diupdate. Jika enqueue gagal/tidak terkirim, slot tidak diubah agar tidak terkunci.
+6. State terbaru di-upsert per client (satu query `INSERT ... ON CONFLICT ... DO UPDATE`) sehingga update bersifat atomik di level row.
 
 
 ## Pengaturan Concurrency & Deadline `runCron`
