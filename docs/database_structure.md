@@ -22,6 +22,7 @@ for PostgreSQL but can work with MySQL or SQLite via the DB adapter.
 | dashboard_premium_request_audit | audit trail for dashboard premium request lifecycle |
 | penmas_user | credentials for Penmas editorial operators |
 | insta_post / insta_post_khusus | Instagram posts fetched for each client (regular & khusus feeds) |
+| insta_post_clients | junction table enabling multiple clients to share same Instagram post (collaboration posts) |
 | insta_like / insta_comment | cached likes and comments for Instagram posts |
 | insta_profile | basic Instagram profile information |
 | insta_post_roles | restricts Instagram post visibility per role |
@@ -146,7 +147,7 @@ can attach premium context without scanning historical rows.
 ### `insta_post`
 Stores Instagram posts fetched for a client.
 - `shortcode` – primary key of the post
-- `client_id` – foreign key to `clients`
+- `client_id` – foreign key to `clients` (stores the first client that fetched the post; for collaboration posts, use `insta_post_clients` junction table)
 - `caption` – post text
 - `comment_count` – number of comments
 - `thumbnail_url` – image preview
@@ -156,6 +157,14 @@ Stores Instagram posts fetched for a client.
 - `images_url` – JSON array of all image URLs when the post is a carousel
 - `is_carousel` – boolean indicating whether the post contains multiple images
 - `created_at` – timestamp of the post
+
+### `insta_post_clients`
+Junction table mapping Instagram posts to multiple clients (supports collaboration posts).
+- `shortcode` – references `insta_post(shortcode)` with cascade delete
+- `client_id` – references `clients(client_id)` with cascade delete
+- `created_at` – when this client-post association was created
+- composite primary key `(shortcode, client_id)`
+- Allows multiple clients to share the same shortcode for Instagram collaboration posts
 
 ### `insta_post_khusus`
 Stores curated Instagram posts for khusus audiences.
