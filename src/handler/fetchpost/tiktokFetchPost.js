@@ -60,6 +60,13 @@ function parseNumeric(value, fallback = null) {
   return fallback;
 }
 
+function normalizeHandle(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^@+/, "")
+    .toLowerCase();
+}
+
 function parseCreatedAt(value) {
   if (!value) return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
@@ -205,6 +212,84 @@ async function deleteVideoIds(videoIdsToDelete, clientId = null) {
     params.push(normalizeClientId(clientId));
   }
   await query(sql, params);
+}
+
+async function filterOfficialTiktokVideoIds(videoIds = [], clientId = null) {
+  if (!videoIds.length) return [];
+
+  const normalizedClientId = String(clientId || "").trim();
+  if (!normalizedClientId) {
+    return [];
+  }
+
+  const officialRes = await query(
+    `SELECT client_tiktok, tiktok_secuid FROM clients WHERE client_id = $1 LIMIT 1`,
+    [normalizedClientId]
+  );
+
+  const officialUsername = normalizeHandle(officialRes.rows[0]?.client_tiktok);
+  const officialSecUid = String(officialRes.rows[0]?.tiktok_secuid || "").trim();
+
+  if (!officialUsername && !officialSecUid) {
+    sendDebug({
+      tag: "TIKTOK SYNC",
+      msg: `Lewati auto-delete: akun resmi client ${normalizedClientId} tidak tersedia.`,
+      client_id: normalizedClientId,
+    });
+    return [];
+  }
+
+  const hasSnapshots = await tableExists("tiktok_snapshots");
+  if (!hasSnapshots) {
+    sendDebug({
+      tag: "TIKTOK SYNC",
+      msg: `Lewati auto-delete: tabel tiktok_snapshots belum tersedia untuk validasi akun resmi ${normalizedClientId}.`,
+      client_id: normalizedClientId,
+    });
+    return [];
+  }
+
+  const candidateRes = await query(
+    `SELECT tp.video_id,
+            COALESCE(
+              NULLIF(TRIM(ts.username), ''),
+              NULLIF(TRIM(c.client_tiktok), '')
+            ) AS author_username,
+            NULLIF(TRIM(ts.author_secuid), '') AS author_secuid
+       FROM tiktok_post tp
+       LEFT JOIN tiktok_snapshots ts ON ts.video_id = tp.video_id
+       LEFT JOIN clients c ON c.client_id = tp.client_id
+      WHERE tp.video_id = ANY($1)
+        AND tp.client_id = $2`,
+    [videoIds, normalizedClientId]
+  );
+
+  const safeToDelete = candidateRes.rows
+    .filter((row) => {
+      const rowUsername = normalizeHandle(row.author_username);
+      const rowSecUid = String(row.author_secuid || "").trim();
+      if (officialSecUid && rowSecUid && rowSecUid === officialSecUid) return true;
+      return rowUsername && officialUsername && rowUsername === officialUsername;
+    })
+    .map((row) => row.video_id);
+
+  const skippedCount = videoIds.length - safeToDelete.length;
+  if (skippedCount > 0) {
+    sendDebug({
+      tag: "TIKTOK SYNC",
+      msg: `Lewati ${skippedCount} video non-resmi/manual untuk client ${normalizedClientId}.`,
+      client_id: normalizedClientId,
+    });
+  }
+
+  return safeToDelete;
+}
+
+async function tableExists(tableName) {
+  const res = await query(`SELECT to_regclass($1) AS table_name`, [
+    `public.${tableName}`,
+  ]);
+  return Boolean(res.rows[0]?.table_name);
 }
 
 /**
@@ -453,7 +538,15 @@ export async function fetchAndStoreTiktokContent(
       tag: "TIKTOK SYNC",
       msg: `Akan menghapus video_id yang tidak ada hari ini: jumlah=${videoIdsToDelete.length}`,
     });
-    await deleteVideoIds(videoIdsToDelete, targetClientId);
+    const safeVideoIdsToDelete = await filterOfficialTiktokVideoIds(
+      videoIdsToDelete,
+      targetClientId
+    );
+    sendDebug({
+      tag: "TIKTOK SYNC",
+      msg: `Video akun resmi yang akan dihapus: jumlah=${safeVideoIdsToDelete.length}`,
+    });
+    await deleteVideoIds(safeVideoIdsToDelete, targetClientId);
   } else {
     sendDebug({
       tag: "TIKTOK SYNC",
