@@ -2,20 +2,88 @@
 
 import { findById as findClientById } from '../model/clientModel.js';
 import { safeSendMessage } from '../utils/waHelper.js';
+import { getPostsTodayByClient as getPostsTodayByClientInsta } from '../model/instaPostModel.js';
+import { getPostsTodayByClient as getPostsTodayByClientTiktok } from '../model/tiktokPostModel.js';
 import { enqueueOutboxEvents } from '../model/waNotificationOutboxModel.js';
 import { createHash } from 'crypto';
 
 const LOG_TAG = 'TUGAS_NOTIFICATION';
+const jakartaDateTimeFormatter = new Intl.DateTimeFormat('id-ID', {
+  timeZone: 'Asia/Jakarta',
+  weekday: 'long',
+  day: '2-digit',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+const indonesianNumberFormatter = new Intl.NumberFormat('id-ID');
+
+const jakartaHumanDateTimeFormatter = new Intl.DateTimeFormat('id-ID', {
+  timeZone: 'Asia/Jakarta',
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
 
 /**
- * Truncate text with ellipsis if it exceeds max length.
- * @param {string} text
- * @param {number} maxLength
- * @returns {string}
+ * Truncate text with ellipsis if it exceeds max length
+ * @param {string} text - Text to truncate
+ * @param {number} maxLength - Maximum length before truncation
+ * @returns {string} Truncated text
  */
 function truncateText(text, maxLength) {
   if (!text) return '';
-  return text.length > maxLength ? `${text.substring(0, maxLength)}...` : text;
+  return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+}
+
+/**
+ * Format number using Indonesian locale
+ * @param {number|string} value - Numeric value
+ * @param {number|string} fallback - Fallback value when not a valid number
+ * @returns {string} Formatted number text
+ */
+function formatCount(value, fallback = 0) {
+  const numericValue = Number(value);
+
+  if (!Number.isFinite(numericValue)) {
+    return `${fallback}`;
+  }
+
+  return indonesianNumberFormatter.format(numericValue);
+}
+
+/**
+ * Format date time into Jakarta timezone display with WIB suffix
+ * @param {string|Date} value - Date value
+ * @returns {string} Formatted date time
+ */
+function formatJakartaDateTime(value) {
+  if (!value) return '-';
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+
+  return `${jakartaDateTimeFormatter.format(date)} WIB`;
+}
+
+/**
+ * Format current or provided date time in Jakarta timezone for scheduled notification header
+ * @param {string|Date} [value] - Optional date value
+ * @returns {string} Formatted date time
+ */
+function formatJakartaHumanTimestamp(value = new Date()) {
+  if (value === null) return '-';
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+
+  return `${jakartaHumanDateTimeFormatter.format(date)} WIB`;
 }
 
 /**
@@ -127,7 +195,7 @@ function formatPostDeletions(changes, clientName) {
 
   lines.push('');
   lines.push('_Tugas yang dihapus tidak perlu dikerjakan lagi._');
-  lines.push('_Mohon sesuaikan pengerjaan dengan perubahan tugas terbaru._');
+  lines.push('_Berikutnya silakan cek update daftar tugas terbaru._');
   
   return lines.join('\n');
 }
@@ -216,14 +284,210 @@ function normalizeGroupId(groupId) {
 }
 
 /**
+ * Get active Instagram posts for a client (today only, Jakarta timezone)
+ * @param {string} clientId - Client ID
+ * @returns {Promise<Array>} Array of Instagram posts
+ */
+async function getActiveInstaPosts(clientId) {
+  try {
+    const posts = await getPostsTodayByClientInsta(clientId);
+    return posts || [];
+  } catch (error) {
+    console.error(`[${LOG_TAG}] Error fetching Instagram posts:`, error.message);
+    return [];
+  }
+}
+
+/**
+ * Get active TikTok posts for a client (today only, Jakarta timezone)
+ * @param {string} clientId - Client ID
+ * @returns {Promise<Array>} Array of TikTok posts
+ */
+async function getActiveTiktokPosts(clientId) {
+  try {
+    const posts = await getPostsTodayByClientTiktok(clientId);
+    return posts || [];
+  } catch (error) {
+    console.error(`[${LOG_TAG}] Error fetching TikTok posts:`, error.message);
+    return [];
+  }
+}
+
+/**
+ * Format Instagram task list section with links
+ * @param {Array} posts - Array of Instagram posts
+ * @returns {string} Formatted Instagram section
+ */
+function formatInstaTaskSection(posts) {
+  if (!posts || posts.length === 0) return '';
+  
+  const lines = [
+    `📸 *Tugas Instagram (${posts.length} konten):*`,
+    ''
+  ];
+
+  posts.forEach((post, index) => {
+    const shortcode = post.shortcode || '';
+    const caption = post.caption ? truncateText(post.caption, 60) : '(Tidak ada caption)';
+    const link = `https://www.instagram.com/p/${shortcode}/`;
+    const uploadDate = formatJakartaDateTime(post.created_at);
+    const likeText = post.like_count == null ? '-' : formatCount(post.like_count, 0);
+    const commentText = formatCount(post.comment_count, 0);
+
+    lines.push(`${index + 1}. ${link}`);
+    lines.push(`   _${caption}_`);
+    lines.push(`   Upload: ${uploadDate}`);
+    lines.push(`   Likes: ${likeText} | Komentar: ${commentText}`);
+  });
+
+  lines.push('');
+  return lines.join('\n');
+}
+
+/**
+ * Format TikTok task list section with links
+ * @param {Array} posts - Array of TikTok posts
+ * @returns {string} Formatted TikTok section
+ */
+function formatTiktokTaskSection(posts) {
+  if (!posts || posts.length === 0) return '';
+  
+  const lines = [
+    `🎵 *Tugas TikTok (${posts.length} konten):*`,
+    ''
+  ];
+
+  posts.forEach((post, index) => {
+    const videoId = post.video_id || '';
+    const description = post.caption ? truncateText(post.caption, 60) : '(Tidak ada deskripsi)';
+    const username = post.author_username || 'user';
+    const link = `https://www.tiktok.com/@${username}/video/${videoId}`;
+    const uploadDate = formatJakartaDateTime(post.created_at);
+    const likeText = formatCount(post.like_count, 0);
+    const commentText = formatCount(post.comment_count, 0);
+    
+    lines.push(`${index + 1}. ${link}`);
+    lines.push(`   _${description}_`);
+    lines.push(`   Upload: ${uploadDate}`);
+    lines.push(`   Likes: ${likeText} | Komentar: ${commentText}`);
+  });
+
+  lines.push('');
+  return lines.join('\n');
+}
+
+/**
+ * Format task list message for scheduled notifications
+ * @param {string} clientName - Name of the client
+ * @param {Object} changes - Changes object (may be empty)
+ * @param {string} clientId - Client ID (to fetch posts)
+ * @returns {Promise<string>} Formatted message
+ */
+async function formatScheduledTaskList(clientName, changes = null, clientId = null) {
+  const generatedAt = formatJakartaHumanTimestamp();
+
+  // Fetch actual posts first to get accurate counts
+  let instaPosts = [];
+  let tiktokPosts = [];
+  
+  if (clientId) {
+    instaPosts = await getActiveInstaPosts(clientId);
+    tiktokPosts = await getActiveTiktokPosts(clientId);
+  }
+  
+  // Use actual fetched post counts instead of parameters
+  const actualIgCount = instaPosts.length;
+  const actualTiktokCount = tiktokPosts.length;
+  
+  const lines = [
+    `📋 *Daftar Tugas - ${clientName}*`,
+    `🕒 Pengambilan data: ${generatedAt}`,
+    '',
+    `Status tugas saat ini:`,
+    `📸 Instagram: *${actualIgCount}* konten`,
+    `🎵 TikTok: *${actualTiktokCount}* konten`,
+    ''
+  ];
+
+  // Add change summary if there are changes
+  if (changes && hasChanges(changes)) {
+    lines.push('📊 *Perubahan Hari Ini:*');
+    
+    if (changes.igAdded && changes.igAdded.length > 0) {
+      lines.push(`✅ +${changes.igAdded.length} konten Instagram baru`);
+    }
+    
+    if (changes.tiktokAdded && changes.tiktokAdded.length > 0) {
+      lines.push(`✅ +${changes.tiktokAdded.length} konten TikTok baru`);
+    }
+    
+    if (changes.igDeleted > 0) {
+      lines.push(`❌ -${changes.igDeleted} konten Instagram dihapus`);
+    }
+    
+    if (changes.tiktokDeleted > 0) {
+      lines.push(`❌ -${changes.tiktokDeleted} konten TikTok dihapus`);
+    }
+    
+    if (changes.linkChanges && changes.linkChanges.length > 0) {
+      lines.push(`🔗 ~${changes.linkChanges.length} perubahan link amplifikasi`);
+    }
+    
+    lines.push('');
+  }
+
+  // Add actual task links grouped by platform
+  if (clientId && (instaPosts.length > 0 || tiktokPosts.length > 0)) {
+    lines.push('📝 *Detail Tugas:*');
+    lines.push('');
+    
+    // Add Instagram posts (already fetched)
+    const instaSection = formatInstaTaskSection(instaPosts);
+    if (instaSection) {
+      lines.push(instaSection);
+    }
+    
+    // Add TikTok posts (already fetched)
+    const tiktokSection = formatTiktokTaskSection(tiktokPosts);
+    if (tiktokSection) {
+      lines.push(tiktokSection);
+    }
+  }
+
+  lines.push('_Pastikan semua tugas telah dikerjakan dengan baik._');
+  
+  return lines.join('\n');
+}
+
+/**
+ * Check if changes object has any changes (helper for scheduled notifications)
+ * @param {Object} changes - Changes object
+ * @returns {boolean} True if there are changes
+ */
+function hasChanges(changes) {
+  if (!changes) return false;
+  return (
+    (changes.igAdded && changes.igAdded.length > 0) ||
+    (changes.tiktokAdded && changes.tiktokAdded.length > 0) ||
+    changes.igDeleted > 0 ||
+    changes.tiktokDeleted > 0 ||
+    (changes.linkChanges && changes.linkChanges.length > 0)
+  );
+}
+
+/**
  * Send task notification to WhatsApp group
  * @param {Object} waClient - WhatsApp client instance
  * @param {string} clientId - Client ID
  * @param {Object} changes - Object containing change details
+ * @param {Object} options - Optional parameters
+ * @param {boolean} options.forceScheduled - Force send as scheduled notification (always send)
  * @returns {Promise<boolean>} Success status
  */
-export async function sendTugasNotification(waClient, clientId, changes) {
+export async function sendTugasNotification(waClient, clientId, changes, options = {}) {
   try {
+    const { forceScheduled = false } = options;
+
     if (!waClient) {
       console.warn(`[${LOG_TAG}] WhatsApp client not available`);
       return false;
@@ -267,24 +531,31 @@ export async function sendTugasNotification(waClient, clientId, changes) {
     const clientName = client.nama || clientId;
     const messages = [];
 
-    if (changes.igAdded && changes.igAdded.length > 0) {
-      const msg = formatInstaPostAdditions(changes.igAdded, clientName);
-      if (msg) messages.push(msg);
-    }
+    // If this is a scheduled notification, build scheduled task list
+    if (forceScheduled) {
+      const scheduledMsg = await formatScheduledTaskList(clientName, changes, clientId);
+      if (scheduledMsg) messages.push(scheduledMsg);
+    } else {
+      // Build messages based on changes (original behavior)
+      if (changes.igAdded && changes.igAdded.length > 0) {
+        const msg = formatInstaPostAdditions(changes.igAdded, clientName);
+        if (msg) messages.push(msg);
+      }
 
-    if (changes.tiktokAdded && changes.tiktokAdded.length > 0) {
-      const msg = formatTiktokPostAdditions(changes.tiktokAdded, clientName);
-      if (msg) messages.push(msg);
-    }
+      if (changes.tiktokAdded && changes.tiktokAdded.length > 0) {
+        const msg = formatTiktokPostAdditions(changes.tiktokAdded, clientName);
+        if (msg) messages.push(msg);
+      }
 
-    if (changes.igDeleted > 0 || changes.tiktokDeleted > 0) {
-      const msg = formatPostDeletions(changes, clientName);
-      if (msg) messages.push(msg);
-    }
+      if (changes.igDeleted > 0 || changes.tiktokDeleted > 0) {
+        const msg = formatPostDeletions(changes, clientName);
+        if (msg) messages.push(msg);
+      }
 
-    if (changes.linkChanges && changes.linkChanges.length > 0) {
-      const msg = formatLinkChanges(changes.linkChanges, clientName);
-      if (msg) messages.push(msg);
+      if (changes.linkChanges && changes.linkChanges.length > 0) {
+        const msg = formatLinkChanges(changes.linkChanges, clientName);
+        if (msg) messages.push(msg);
+      }
     }
 
     // If no messages to send, return early
@@ -328,7 +599,20 @@ function buildIdempotencyHash(payload) {
   return createHash('sha256').update(payload).digest('hex');
 }
 
-export async function buildTugasNotificationPayload(clientId, changes) {
+function getJakartaHourKey(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    hour12: false,
+  });
+  return formatter.format(date).replace(' ', 'T').replace(/-/g, '');
+}
+
+export async function buildTugasNotificationPayload(clientId, changes, options = {}) {
+  const { forceScheduled = false } = options;
 
   if (!clientId) {
     return null;
@@ -360,24 +644,32 @@ export async function buildTugasNotificationPayload(clientId, changes) {
   const clientName = client.nama || clientId;
   const messages = [];
 
-  if (changes.igAdded && changes.igAdded.length > 0) {
-    const msg = formatInstaPostAdditions(changes.igAdded, clientName);
-    if (msg) messages.push(msg);
-  }
+  if (forceScheduled) {
+    const scheduledMsg = await formatScheduledTaskList(clientName, changes, clientId);
+    if (scheduledMsg) messages.push(scheduledMsg);
+  } else {
+    if (changes.igAdded && changes.igAdded.length > 0) {
+      const msg = formatInstaPostAdditions(changes.igAdded, clientName);
+      if (msg) messages.push(msg);
+    }
 
-  if (changes.tiktokAdded && changes.tiktokAdded.length > 0) {
-    const msg = formatTiktokPostAdditions(changes.tiktokAdded, clientName);
-    if (msg) messages.push(msg);
-  }
+    if (changes.tiktokAdded && changes.tiktokAdded.length > 0) {
+      const msg = formatTiktokPostAdditions(changes.tiktokAdded, clientName);
+      if (msg) messages.push(msg);
+    }
 
-  if (changes.igDeleted > 0 || changes.tiktokDeleted > 0) {
-    const msg = formatPostDeletions(changes, clientName);
-    if (msg) messages.push(msg);
-  }
+    if (changes.igDeleted > 0 || changes.tiktokDeleted > 0) {
+      const msg = formatPostDeletions(changes, clientName);
+      if (msg) messages.push(msg);
 
-  if (changes.linkChanges && changes.linkChanges.length > 0) {
-    const msg = formatLinkChanges(changes.linkChanges, clientName);
-    if (msg) messages.push(msg);
+      const latestTaskList = await formatScheduledTaskList(clientName, changes, clientId);
+      if (latestTaskList) messages.push(latestTaskList);
+    }
+
+    if (changes.linkChanges && changes.linkChanges.length > 0) {
+      const msg = formatLinkChanges(changes.linkChanges, clientName);
+      if (msg) messages.push(msg);
+    }
   }
 
   if (messages.length === 0) {
@@ -388,21 +680,25 @@ export async function buildTugasNotificationPayload(clientId, changes) {
     clientId,
     groupIds,
     messages,
+    forceScheduled,
   };
 }
 
-export async function enqueueTugasNotification(clientId, changes) {
-  const payload = await buildTugasNotificationPayload(clientId, changes);
+export async function enqueueTugasNotification(clientId, changes, options = {}) {
+  const payload = await buildTugasNotificationPayload(clientId, changes, options);
   if (!payload) {
     return { enqueuedCount: 0, duplicatedCount: 0 };
   }
 
-  const { groupIds, messages } = payload;
+  const { groupIds, messages, forceScheduled } = payload;
+  const hourKey = getJakartaHourKey();
 
   const outboxEvents = [];
   for (const groupId of groupIds) {
     for (const message of messages) {
-      const idempotencySeed = `${clientId}|${groupId}|change|${message}`;
+      const idempotencySeed = forceScheduled
+        ? `${clientId}|${groupId}|scheduled|${hourKey}|${message}`
+        : `${clientId}|${groupId}|change|${message}`;
 
       outboxEvents.push({
         clientId,
