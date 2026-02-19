@@ -112,7 +112,7 @@ Format group ID WhatsApp harus:
    - Enqueue notifikasi ke outbox setelah fetch selesai (bukan kirim langsung)
    - Logging status enqueue notifikasi
    - Memuat state scheduler dari PostgreSQL sebelum proses client
-   - Menyimpan state baseline terbaru (`last_ig_count`, `last_tiktok_count`) secara atomik setelah proses client
+   - Menyimpan state terbaru (`last_ig_count`, `last_tiktok_count`, `last_notified_at`) secara atomik setelah proses client
 
 4. **src/model/waNotificationOutboxModel.js** (New)
    - Insert event outbox dengan deduplikasi `idempotency_key`
@@ -274,6 +274,8 @@ State sekarang dipersistenkan ke tabel PostgreSQL `wa_notification_scheduler_sta
 - `client_id`
 - `last_ig_count`
 - `last_tiktok_count`
+- `last_notified_at`
+- `last_notified_slot`
 
 ### Alur state pada `runCron`
 
@@ -313,7 +315,7 @@ Jika query state gagal (misalnya database sementara down):
 
 - Cron **tetap memproses fetch** konten/engagement semua client.
 - Perhitungan delta memakai baseline konservatif (`counts_before = counts_after`) agar tidak memicu blast notifikasi berkala tanpa state valid.
-- Blast notifikasi terjadwal per jam dihapus; notifikasi hanya dikirim jika benar-benar terdeteksi perubahan signifikan dari data yang tersedia.
+- Mode hourly-only notification dinonaktifkan sementara (hanya kirim jika benar-benar terdeteksi perubahan signifikan dari data yang tersedia).
 - Error state storage dilaporkan ke Telegram untuk observability.
 
 
