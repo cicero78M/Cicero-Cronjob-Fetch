@@ -471,6 +471,9 @@ export async function fetchAndStoreTiktokContent(
     // ==== FILTER HANYA KONTEN YANG DI-POST HARI INI (Asia/Jakarta) ====
     let items = filterItemsForToday();
 
+    // Tandai fetch berhasil jika API mengembalikan konten apapun (bukan karena API error)
+    if (itemList.length > 0) hasSuccessfulFetch = true;
+
     if (
       items.length === 0 &&
       canFallbackToUsername &&
@@ -482,6 +485,7 @@ export async function fetchAndStoreTiktokContent(
           `Konten hari ini kosong dari fetch utama ${client.id}`
         );
         items = filterItemsForToday();
+        if (itemList.length > 0) hasSuccessfulFetch = true;
       } catch (fallbackErr) {
         sendDebug({
           tag: "TIKTOK POST ERROR",
@@ -497,8 +501,6 @@ export async function fetchAndStoreTiktokContent(
       msg: `Filtered post hari ini: ${items.length} dari ${itemList.length} (client: ${client.id})`,
       client_id: client.id,
     });
-
-    if (items.length > 0) hasSuccessfulFetch = true;
 
     for (const post of items) {
       const toSave = {
@@ -529,7 +531,7 @@ export async function fetchAndStoreTiktokContent(
     }
   }
 
-  // PATCH: Hapus hanya jika ada minimal 1 fetch sukses (dan ada minimal 1 post hari ini)
+  // Hapus hanya jika ada minimal 1 fetch sukses dari API (konten berhasil diambil)
   if (hasSuccessfulFetch) {
     const videoIdsToDelete = dbVideoIdsToday.filter(
       (x) => !fetchedVideoIdsToday.includes(x)
@@ -538,15 +540,7 @@ export async function fetchAndStoreTiktokContent(
       tag: "TIKTOK SYNC",
       msg: `Akan menghapus video_id yang tidak ada hari ini: jumlah=${videoIdsToDelete.length}`,
     });
-    const safeVideoIdsToDelete = await filterOfficialTiktokVideoIds(
-      videoIdsToDelete,
-      targetClientId
-    );
-    sendDebug({
-      tag: "TIKTOK SYNC",
-      msg: `Video akun resmi yang akan dihapus: jumlah=${safeVideoIdsToDelete.length}`,
-    });
-    await deleteVideoIds(safeVideoIdsToDelete, targetClientId);
+    await deleteVideoIds(videoIdsToDelete, targetClientId);
   } else {
     sendDebug({
       tag: "TIKTOK SYNC",
