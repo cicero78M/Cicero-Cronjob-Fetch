@@ -564,3 +564,69 @@ describe('fetchAndStoreTiktokContent delete-on-api-success', () => {
   });
 
 });
+
+describe('fetchAndStoreSingleTiktokPost manual timestamp behavior', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2024-03-10T08:30:00.000Z'));
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.resetModules();
+  });
+
+  test('manual input fetched today keeps created_at as fetch time and stores original_created_at', async () => {
+    const mockQuery = jest.fn();
+    const mockUpsert = jest.fn().mockResolvedValue();
+
+    const yesterdayUnix = Math.floor(new Date('2024-03-09T08:30:00.000Z').getTime() / 1000);
+
+    jest.unstable_mockModule('../src/db/index.js', () => ({
+      query: mockQuery,
+    }));
+    jest.unstable_mockModule('../src/model/clientModel.js', () => ({
+      update: jest.fn(),
+    }));
+    jest.unstable_mockModule('../src/model/tiktokPostModel.js', () => ({
+      upsertTiktokPosts: mockUpsert,
+    }));
+    jest.unstable_mockModule('../src/middleware/debugHandler.js', () => ({
+      sendDebug: jest.fn(),
+    }));
+    jest.unstable_mockModule('../src/service/tiktokApi.js', () => ({
+      fetchTiktokPosts: jest.fn(),
+      fetchTiktokPostsBySecUid: jest.fn(),
+      fetchTiktokInfo: jest.fn(),
+      fetchTiktokPostDetail: jest.fn().mockResolvedValue({
+        id: 'manual-001',
+        desc: 'manual caption',
+        createTime: yesterdayUnix,
+        stats: { diggCount: 10, commentCount: 2 },
+      }),
+    }));
+
+    mockQuery.mockResolvedValueOnce({ rows: [{ client_id: 'CLIENT_MANUAL' }] });
+
+    const { fetchAndStoreSingleTiktokPost } = await import(
+      '../src/handler/fetchpost/tiktokFetchPost.js'
+    );
+
+    const beforeFetch = Date.now();
+    const result = await fetchAndStoreSingleTiktokPost('CLIENT_MANUAL', 'https://www.tiktok.com/@acc/video/12345678');
+    const afterFetch = Date.now();
+
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    const upsertPayload = mockUpsert.mock.calls[0][1][0];
+
+    const createdAtMs = new Date(upsertPayload.created_at).getTime();
+    const originalCreatedAtMs = new Date(upsertPayload.original_created_at).getTime();
+
+    expect(createdAtMs).toBeGreaterThanOrEqual(beforeFetch - 1000);
+    expect(createdAtMs).toBeLessThanOrEqual(afterFetch + 1000);
+    expect(new Date(upsertPayload.created_at).toDateString()).toBe(new Date().toDateString());
+
+    expect(originalCreatedAtMs).toBe(yesterdayUnix * 1000);
+    expect(result.originalCreatedAt.getTime()).toBe(yesterdayUnix * 1000);
+  });
+});

@@ -134,10 +134,11 @@ export async function fetchAndStoreSingleTiktokPost(clientId, videoInput) {
   });
 
   const detail = await fetchTiktokPostDetail(videoId);
-  const createdAt =
+  const originalCreatedAt =
     parseCreatedAt(detail?.createTime) ||
     parseCreatedAt(detail?.create_time) ||
     parseCreatedAt(detail?.timestamp);
+  const createdAt = new Date();
 
   const stats = detail?.stats || {};
   const statsV2 = detail?.statsV2 || {};
@@ -159,6 +160,7 @@ export async function fetchAndStoreSingleTiktokPost(clientId, videoInput) {
     video_id: detail?.id || detail?.video_id || videoId,
     caption: detail?.desc || detail?.caption || "",
     created_at: createdAt,
+    original_created_at: originalCreatedAt,
     like_count: likeCount,
     comment_count: commentCount,
     source_type: 'manual_input',
@@ -177,6 +179,7 @@ export async function fetchAndStoreSingleTiktokPost(clientId, videoInput) {
     videoId: postPayload.video_id,
     caption: postPayload.caption,
     createdAt,
+    originalCreatedAt,
     likeCount,
     commentCount,
   };
