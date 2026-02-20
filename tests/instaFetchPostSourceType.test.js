@@ -124,16 +124,19 @@ test('auto-delete hanya menghapus post source_type cron_fetch', async () => {
   expect(deleteInstaPostClientsCall[1][0]).toEqual(['CRON001']);
 });
 
-test('manual fetch single post memberi source_type manual_input di upsert utama', async () => {
+test('manual input hari ini tetap memakai source_type manual_input dan created_at waktu input', async () => {
+  const yesterday = Math.floor(Date.now() / 1000) - 86400;
   mockFetchInstagramPostInfo.mockResolvedValue({
     caption: { text: 'caption' },
     comment_count: 1,
     thumbnail_url: 'https://img.test/1.jpg',
     is_video: false,
-    taken_at: Math.floor(Date.now() / 1000),
+    taken_at: yesterday,
   });
 
+  const beforeFetch = Date.now();
   await fetchSinglePostKhusus('https://www.instagram.com/p/MANUAL01/', 'clientA');
+  const afterFetch = Date.now();
 
   expect(mockUpsertInstaPost).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -141,4 +144,13 @@ test('manual fetch single post memberi source_type manual_input di upsert utama'
       source_type: 'manual_input',
     }),
   );
+
+  const upsertPayload = mockUpsertInstaPost.mock.calls[0][0];
+  const createdAtMs = new Date(upsertPayload.created_at).getTime();
+  const originalCreatedAtMs = new Date(upsertPayload.original_created_at).getTime();
+
+  expect(createdAtMs).toBeGreaterThanOrEqual(beforeFetch - 1000);
+  expect(createdAtMs).toBeLessThanOrEqual(afterFetch + 1000);
+  expect(originalCreatedAtMs).toBe(yesterday * 1000);
+  expect(new Date(upsertPayload.created_at).toDateString()).toBe(new Date().toDateString());
 });
