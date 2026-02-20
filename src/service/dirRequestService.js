@@ -699,30 +699,29 @@ async function performAction(
       break;
     }
     case "14": {
-      const { fetchAndStoreTiktokPosts } = await import("../handler/fetchpost/tiktokFetchPost.js");
-      const { handleFetchKomentarTiktok } = await import("../handler/fetchengagement/fetchKomentarTiktok.js");
-      const { rekapKomentarTiktok } = await import("../handler/fetchabsensi/tiktok/absensiKomentarTiktok.js");
+      const { fetchAndStoreTiktokContent } = await import(
+        "../handler/fetchpost/tiktokFetchPost.js"
+      );
+      const { handleFetchKomentarTiktokBatch } = await import(
+        "../handler/fetchengagement/fetchCommentTiktok.js"
+      );
       const targetId = (clientId || DITBINMAS_CLIENT_ID).toUpperCase();
-      const targetClient = await findClientById(targetId);
-      const targetLabel = targetClient?.nama
-        ? `${formatNama(targetClient.nama)} (${targetId})`
-        : targetId;
-      await fetchAndStoreTiktokPosts(waClient, chatId, targetId);
-      await handleFetchKomentarTiktok(null, null, targetId);
-      const rekapData = await collectKomentarRecap(targetId);
-      const displayData = await rekapKomentarTiktok(rekapData);
-      msg = displayData.message || "Rekap komentar TikTok selesai";
+      await fetchAndStoreTiktokContent(targetId, waClient, chatId);
+      await handleFetchKomentarTiktokBatch(waClient, chatId, targetId);
+      msg = await absensiKomentarDitbinmas(targetId);
       break;
     }
     case "16": {
-      const { fetchAndStoreTiktokPostsFull } = await import("../handler/fetchpost/tiktokFetchPost.js");
+      const { fetchAndStoreTiktokContent } = await import(
+        "../handler/fetchpost/tiktokFetchPost.js"
+      );
       const targetId = (clientId || DITBINMAS_CLIENT_ID).toUpperCase();
       const targetClient = await findClientById(targetId);
       const targetLabel = targetClient?.nama
         ? `${formatNama(targetClient.nama)} (${targetId})`
         : targetId;
-      await fetchAndStoreTiktokPostsFull(waClient, chatId, targetId);
-      msg = `✅ Fetch & store TikTok posts (full mode) untuk ${targetLabel} selesai.`;
+      await fetchAndStoreTiktokContent(targetId, waClient, chatId);
+      msg = `✅ Fetch & store TikTok posts untuk ${targetLabel} selesai.`;
       break;
     }
     default:
