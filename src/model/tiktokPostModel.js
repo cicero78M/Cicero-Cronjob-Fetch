@@ -81,7 +81,10 @@ export async function upsertTiktokPosts(client_id, posts) {
              comment_count = EXCLUDED.comment_count,
              created_at = EXCLUDED.created_at,
              original_created_at = EXCLUDED.original_created_at,
-             source_type = EXCLUDED.source_type`,
+             source_type = CASE
+               WHEN tiktok_post.source_type = 'manual_input' THEN tiktok_post.source_type
+               ELSE EXCLUDED.source_type
+             END`,
       [
         client_id,
         post.video_id || post.id,
@@ -136,7 +139,10 @@ export async function upsertTiktokPostWithStatus({
            comment_count = EXCLUDED.comment_count,
            created_at = EXCLUDED.created_at,
            original_created_at = EXCLUDED.original_created_at,
-           source_type = EXCLUDED.source_type
+           source_type = CASE
+             WHEN tiktok_post.source_type = 'manual_input' THEN tiktok_post.source_type
+             ELSE EXCLUDED.source_type
+           END
      RETURNING xmax = '0'::xid AS inserted`,
     [
       client_id,

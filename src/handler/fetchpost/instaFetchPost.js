@@ -504,7 +504,10 @@ export async function fetchAndStoreInstaContent(
               image_url = EXCLUDED.image_url,
               images_url = EXCLUDED.images_url,
               is_carousel = EXCLUDED.is_carousel,
-              source_type = EXCLUDED.source_type,
+              source_type = CASE
+                WHEN insta_post.source_type = 'manual_input' THEN insta_post.source_type
+                ELSE EXCLUDED.source_type
+              END,
               created_at = EXCLUDED.created_at,
               original_created_at = EXCLUDED.original_created_at`,
         [

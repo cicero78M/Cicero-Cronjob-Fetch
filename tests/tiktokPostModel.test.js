@@ -10,12 +10,13 @@ let getPostsTodayByClient;
 let getVideoIdsTodayByClient;
 let countPostsByClient;
 let upsertTiktokPosts;
+let upsertTiktokPostWithStatus;
 
 const toJakartaDateInput = (date) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(date);
 
 beforeAll(async () => {
-  ({ getPostsTodayByClient, getVideoIdsTodayByClient, countPostsByClient, upsertTiktokPosts } = await import(
+  ({ getPostsTodayByClient, getVideoIdsTodayByClient, countPostsByClient, upsertTiktokPosts, upsertTiktokPostWithStatus } = await import(
     '../src/model/tiktokPostModel.js'
   ));
 });
@@ -177,4 +178,42 @@ test('upsertTiktokPosts writes internal created_at and original_created_at separ
   expect(params[5]).toBe('2024-03-10T08:30:00.000Z');
   expect(params[6]).toBe('2024-03-09T08:30:00.000Z');
   expect(params[7]).toBe('manual_input');
+});
+
+
+test('upsertTiktokPosts keeps manual_input source_type when cron payload upserts conflict', async () => {
+  mockQuery.mockResolvedValueOnce({ rows: [] });
+
+  await upsertTiktokPosts('CLIENT_X', [
+    {
+      video_id: 'vid-002',
+      caption: 'cron caption',
+      like_count: 1,
+      comment_count: 0,
+      source_type: 'cron_fetch',
+    },
+  ]);
+
+  expect(mockQuery).toHaveBeenCalledTimes(1);
+  const [sql, params] = mockQuery.mock.calls[0];
+  expect(sql).toContain("WHEN tiktok_post.source_type = 'manual_input' THEN tiktok_post.source_type");
+  expect(params[7]).toBe('cron_fetch');
+});
+
+test('upsertTiktokPostWithStatus keeps manual_input source_type when cron payload upserts conflict', async () => {
+  mockQuery.mockResolvedValueOnce({ rows: [{ inserted: false }] });
+
+  const result = await upsertTiktokPostWithStatus({
+    client_id: 'CLIENT_Y',
+    video_id: 'vid-003',
+    caption: 'cron update',
+    like_count: 12,
+    comment_count: 4,
+    source_type: 'cron_fetch',
+  });
+
+  expect(result).toEqual({ inserted: false, updated: true });
+  const [sql, params] = mockQuery.mock.calls[0];
+  expect(sql).toContain("WHEN tiktok_post.source_type = 'manual_input' THEN tiktok_post.source_type");
+  expect(params[7]).toBe('cron_fetch');
 });
