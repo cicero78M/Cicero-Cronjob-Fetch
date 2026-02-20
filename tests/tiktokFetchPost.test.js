@@ -349,3 +349,100 @@ describe('fetchAndStoreTiktokContent fallback handling', () => {
     expect(upsertPayload.comment_count).toBe(0);
   });
 });
+
+describe('fetchAndStoreTiktokContent delete-on-api-success', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.resetModules();
+  });
+
+  test('deletes DB post that is no longer in API response even when no posts are from today', async () => {
+    jest.useFakeTimers();
+    // 14:00 WIB (07:00 UTC) — within fallback window
+    const systemTime = new Date('2024-03-10T07:00:00Z');
+    jest.setSystemTime(systemTime);
+
+    const expectedJakartaDate = new Date().toLocaleDateString('en-CA', {
+      timeZone: 'Asia/Jakarta',
+    });
+
+    const mockQuery = jest.fn();
+    const mockUpsert = jest.fn().mockResolvedValue();
+    const mockSendDebug = jest.fn();
+
+    // oldVideoId was posted today and is now deleted from TikTok
+    const oldVideoId = 'deleted-today-video';
+
+    jest.unstable_mockModule('../src/db/index.js', () => ({
+      query: mockQuery,
+    }));
+    jest.unstable_mockModule('../src/model/clientModel.js', () => ({
+      update: jest.fn(),
+    }));
+    jest.unstable_mockModule('../src/model/tiktokPostModel.js', () => ({
+      upsertTiktokPosts: mockUpsert,
+    }));
+    jest.unstable_mockModule('../src/middleware/debugHandler.js', () => ({
+      sendDebug: mockSendDebug,
+    }));
+
+    // API returns one post from YESTERDAY (not today) — account deleted today's post
+    const yesterdayTimestamp = Math.floor(
+      new Date('2024-03-09T10:00:00Z').getTime() / 1000
+    );
+    jest.unstable_mockModule('../src/service/tiktokApi.js', () => ({
+      fetchTiktokPosts: jest.fn().mockResolvedValue([]),
+      fetchTiktokPostsBySecUid: jest.fn().mockResolvedValue([
+        {
+          id: 'yesterday-video',
+          createTime: yesterdayTimestamp,
+          stats: { diggCount: 10, commentCount: 3 },
+        },
+      ]),
+      fetchTiktokInfo: jest.fn(),
+      fetchTiktokPostDetail: jest.fn(),
+    }));
+
+    const { fetchAndStoreTiktokContent } = await import(
+      '../src/handler/fetchpost/tiktokFetchPost.js'
+    );
+
+    mockQuery
+      // 1: getVideoIdsToday — DB has the deleted post
+      .mockResolvedValueOnce({ rows: [{ video_id: oldVideoId }] })
+      // 2: getEligibleTiktokClients
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'CLIENT_DEL',
+            client_tiktok: '@clientdel',
+            tiktok_secuid: 'SEC_DEL',
+          },
+        ],
+      })
+      // 3: DELETE (deleteVideoIds for oldVideoId)
+      .mockResolvedValueOnce({ rowCount: 1 })
+      // 4: clientsForMap
+      .mockResolvedValueOnce({
+        rows: [{ client_id: 'CLIENT_DEL', client_tiktok: '@clientdel' }],
+      })
+      // 5: final summary
+      .mockResolvedValueOnce({ rows: [] });
+
+    await fetchAndStoreTiktokContent('CLIENT_DEL');
+
+    // No upsert because no posts from today
+    expect(mockUpsert).not.toHaveBeenCalled();
+
+    // DELETE must be called to remove the post that was deleted from the official account
+    const deleteCall = mockQuery.mock.calls.find((call) =>
+      call[0].startsWith('DELETE FROM tiktok_post')
+    );
+    expect(deleteCall).toBeDefined();
+    expect(deleteCall[1]).toEqual([
+      [oldVideoId],
+      expectedJakartaDate,
+      'client_del',
+    ]);
+  });
+});

@@ -262,10 +262,10 @@ async function filterOfficialInstagramShortcodes(shortcodes = [], clientId = nul
   if (!hasExtendedPosts || !hasExtendedUsers) {
     sendDebug({
       tag: "IG SYNC",
-      msg: `Lewati auto-delete: tabel ig_ext_posts/ig_ext_users belum tersedia untuk validasi akun resmi ${normalizedClientId}.`,
+      msg: `Tabel ig_ext_posts/ig_ext_users belum tersedia, hapus semua shortcode dari akun resmi ${normalizedClientId} tanpa validasi tambahan.`,
       client_id: normalizedClientId,
     });
-    return [];
+    return shortcodes;
   }
 
   const usernameRes = await query(
@@ -280,7 +280,13 @@ async function filterOfficialInstagramShortcodes(shortcodes = [], clientId = nul
   );
 
   const safeToDelete = usernameRes.rows
-    .filter((row) => normalizeHandle(row.username) === officialUsername)
+    .filter((row) => {
+      const rowUsername = normalizeHandle(row.username);
+      // Jika tidak ada data extended (misal savePostWithMedia gagal), anggap post resmi
+      // karena diambil dari akun official melalui cron fetch
+      if (!rowUsername) return true;
+      return rowUsername === officialUsername;
+    })
     .map((row) => row.shortcode);
 
   const skippedCount = shortcodes.length - safeToDelete.length;
@@ -440,7 +446,7 @@ export async function fetchAndStoreInstaContent(
       msg: `Jumlah post IG HARI INI SAJA: ${items.length}`,
       client_id: client.id
     });
-    if (items.length > 0) hasSuccessfulFetch = true;
+    if (postsRes.length > 0) hasSuccessfulFetch = true;
 
     for (const post of items) {
       const toSave = {
