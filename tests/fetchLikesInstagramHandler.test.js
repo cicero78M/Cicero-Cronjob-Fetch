@@ -33,6 +33,19 @@ beforeEach(() => {
   mockSaveLikeSnapshotAudit.mockResolvedValue(1);
 });
 
+
+test('query likes harian mencakup post cron dan manual_input untuk client yang sama', async () => {
+  mockQuery.mockResolvedValueOnce({ rows: [] });
+
+  await handleFetchLikesInstagram(null, null, 'ClientA');
+
+  expect(mockQuery).toHaveBeenCalledTimes(1);
+  const [sql, params] = mockQuery.mock.calls[0];
+  expect(sql).toContain("COALESCE(NULLIF(TRIM(p.source_type), ''), 'cron_fetch') = 'manual_input'");
+  expect(sql).toContain("(p.created_at AT TIME ZONE 'Asia/Jakarta')::date");
+  expect(params).toEqual(['ClientA']);
+});
+
 test('adds missing exception usernames to likes result', async () => {
   mockQuery
     .mockResolvedValueOnce({ rows: [{ shortcode: 'sc1' }] })

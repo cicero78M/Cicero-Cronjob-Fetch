@@ -113,6 +113,7 @@ Cron `cronDirRequestFetchSosmed` berjalan dalam **dua layer jadwal** (timezone `
    - TikTok post (`fetchAndStoreTiktokContent`)
 3. Setelah itu (atau langsung jika tidak lolos gating), tetap jalankan refresh engagement:
    - Instagram likes (`handleFetchLikesInstagram`)
+     - Query likes memakai _scoped posts_ berbasis `insta_post_clients` (hasil cron fetch) **dan** fallback `insta_post.client_id + source_type=manual_input` (hasil manual input) untuk tanggal hari yang sama (WIB).
    - TikTok comments (`handleFetchKomentarTiktokBatch`)
 
 Konsekuensi operasional: data post yang masuk manual di hari yang sama tetap bisa ikut terbaca saat tahap refresh likes/comments, karena refresh engagement selalu berjalan pada setiap trigger global untuk akun aktif, meskipun slot tersebut bukan slot fetch post untuk client terkait.

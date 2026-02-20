@@ -545,6 +545,7 @@ berpindah ke dashboard web atau menjalankan skrip manual.
   2. **timeCheck**: cron berjalan periodik hingga malam, dengan keputusan fetch post ditentukan per-client berdasarkan jendela waktu masing-masing.
   3. **fetchPosts**: menarik konten baru IG/TikTok selama masih di dalam jendela fetch post client (`06:00-20:59 WIB` untuk `org`/`ditbinmas`, `06:00-22:59 WIB` untuk `bidhumas`/`ditintelkam`).
   4. **refreshEngagement**: memperbarui likes/komentar menggunakan konten yang baru diambil, termasuk setelah batas fetch post client terlewati.
+     - Untuk Instagram likes, sumber konten memakai kombinasi relasi `insta_post_clients` (konten hasil cron) dan fallback konten `manual_input` milik client yang sama pada hari berjalan (WIB), sehingga manual fetch tetap ikut diproses.
   5. **buildMessage**: merangkum aksi (fetch/refresh), delta konten, dan total
      penerima.
   6. **sendToRecipients**: mengirim narasi ke grup WA per client dan saluran debug dengan status `sent` atau `skipped`.

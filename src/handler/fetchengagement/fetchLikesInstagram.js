@@ -137,17 +137,32 @@ async function fetchAndStoreLikes(shortcode, client_id = null, snapshotWindow = 
  */
 export async function handleFetchLikesInstagram(waClient, chatId, client_id, options = {}) {
   try {
-    // Ambil semua post IG milik client hari ini
-    const today = new Date();
-    const yyyy = today.getFullYear();
-    const mm = String(today.getMonth() + 1).padStart(2, "0");
-    const dd = String(today.getDate()).padStart(2, "0");
+    // Ambil semua post IG milik client hari ini.
+    // - Konten cron fetch dipetakan via insta_post_clients
+    // - Konten manual fetch tetap ikut lewat fallback client_id + source_type=manual_input
+    // Seluruh tanggal ditentukan menggunakan timezone Asia/Jakarta.
     const { rows } = await query(
-      `SELECT p.shortcode 
-       FROM insta_post p
-       JOIN insta_post_clients pc ON pc.shortcode = p.shortcode
-       WHERE pc.client_id = $1 AND DATE(p.created_at) = $2`,
-      [client_id, `${yyyy}-${mm}-${dd}`]
+      `WITH scoped_posts AS (
+         SELECT DISTINCT ON (p.shortcode)
+                p.shortcode,
+                p.created_at
+           FROM insta_post p
+           LEFT JOIN insta_post_clients pc ON pc.shortcode = p.shortcode
+          WHERE (
+            LOWER(TRIM(pc.client_id)) = LOWER(TRIM($1))
+            AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date
+          )
+             OR (
+               LOWER(TRIM(p.client_id)) = LOWER(TRIM($1))
+               AND COALESCE(NULLIF(TRIM(p.source_type), ''), 'cron_fetch') = 'manual_input'
+               AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date
+             )
+          ORDER BY p.shortcode, p.created_at DESC
+       )
+       SELECT shortcode
+         FROM scoped_posts
+        ORDER BY created_at ASC, shortcode ASC`,
+      [client_id]
     );
 
     if (!rows.length) {
