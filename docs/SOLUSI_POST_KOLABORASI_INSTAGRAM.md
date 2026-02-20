@@ -47,6 +47,18 @@ Solusi yang diterapkan adalah membuat tabel junction `insta_post_clients` yang m
    - Post di `insta_post` hanya dihapus jika tidak ada client yang tersisa (orphaned post)
    - Hal ini memastikan post kolaborasi tetap ada selama masih ada minimal satu client yang menggunakannya
 
+### Aturan Baru Source Type & Auto-Delete
+
+Selain dukungan kolaborasi, modul fetch Instagram juga menandai asal data di `insta_post.source_type`:
+- `cron_fetch`: post hasil alur sinkronisasi normal (`fetchAndStoreInstaContent`)
+- `manual_input`: post hasil input manual (`fetchSinglePostKhusus`)
+
+Pada proses auto-delete harian, shortlist penghapusan kini dibatasi ketat:
+1. shortcode harus terkait ke akun official client (validasi `client_insta` + data extended user), dan
+2. `source_type` harus `cron_fetch` (post `manual_input` otomatis dilindungi dari auto-delete).
+
+Dengan aturan ini, input manual operasional tetap aman saat cron melakukan sinkronisasi dan pembersihan data harian.
+
 ## Perubahan File
 
 ### Database & Models

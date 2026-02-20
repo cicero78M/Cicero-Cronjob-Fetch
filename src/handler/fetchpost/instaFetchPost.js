@@ -269,7 +269,7 @@ async function filterOfficialInstagramShortcodes(shortcodes = [], clientId = nul
   }
 
   const usernameRes = await query(
-    `SELECT p.shortcode, u.username
+    `SELECT p.shortcode, p.source_type, u.username
        FROM insta_post p
        JOIN insta_post_clients pc ON pc.shortcode = p.shortcode
        LEFT JOIN ig_ext_posts ep ON ep.shortcode = p.shortcode
@@ -281,9 +281,10 @@ async function filterOfficialInstagramShortcodes(shortcodes = [], clientId = nul
 
   const safeToDelete = usernameRes.rows
     .filter((row) => {
+      if (row.source_type !== "cron_fetch") return false;
       const rowUsername = normalizeHandle(row.username);
       // Jika tidak ada data extended (misal savePostWithMedia gagal), anggap post resmi
-      // karena diambil dari akun official melalui cron fetch
+      // selama sumbernya cron fetch dari akun official
       if (!rowUsername) return true;
       return rowUsername === officialUsername;
     })
@@ -491,8 +492,8 @@ export async function fetchAndStoreInstaContent(
         client_id: client.id
       });
       await query(
-        `INSERT INTO insta_post (client_id, shortcode, caption, comment_count, like_count, thumbnail_url, is_video, video_url, image_url, images_url, is_carousel, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,to_timestamp($12))
+        `INSERT INTO insta_post (client_id, shortcode, caption, comment_count, like_count, thumbnail_url, is_video, video_url, image_url, images_url, is_carousel, source_type, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,to_timestamp($13))
          ON CONFLICT (shortcode) DO UPDATE
           SET caption = EXCLUDED.caption,
               comment_count = EXCLUDED.comment_count,
@@ -503,7 +504,8 @@ export async function fetchAndStoreInstaContent(
               image_url = EXCLUDED.image_url,
               images_url = EXCLUDED.images_url,
               is_carousel = EXCLUDED.is_carousel,
-              created_at = to_timestamp($12)`,
+              source_type = EXCLUDED.source_type,
+              created_at = to_timestamp($13)`,
         [
           toSave.client_id,
           toSave.shortcode,
@@ -516,6 +518,7 @@ export async function fetchAndStoreInstaContent(
           toSave.image_url,
           JSON.stringify(toSave.images_url),
           toSave.is_carousel,
+          "cron_fetch",
           post.taken_at,
         ]
       );
@@ -707,6 +710,7 @@ export async function fetchSinglePostKhusus(linkOrCode, clientId) {
       ? info.carousel_media.map(i => i.image_versions?.items?.[0]?.url).filter(Boolean)
       : null,
     is_carousel: Array.isArray(info.carousel_media) && info.carousel_media.length > 1,
+    source_type: "manual_input",
     created_at: info.taken_at ? new Date(info.taken_at * 1000).toISOString() : null
   }; 
   await upsertInstaPostKhusus(data);

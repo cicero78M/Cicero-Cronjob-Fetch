@@ -14,12 +14,13 @@ export async function upsertInstaPost(data) {
     image_url = null,
     images_url = null,
     is_carousel = false,
+    source_type = "cron_fetch",
   } = data;
 
   // created_at bisa dihandle via taken_at di service (lihat service)
   await query(
-    `INSERT INTO insta_post (client_id, shortcode, caption, comment_count, thumbnail_url, is_video, video_url, image_url, images_url, is_carousel, created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11, NOW()))
+    `INSERT INTO insta_post (client_id, shortcode, caption, comment_count, thumbnail_url, is_video, video_url, image_url, images_url, is_carousel, source_type, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12, NOW()))
      ON CONFLICT (shortcode) DO UPDATE
       SET client_id = EXCLUDED.client_id,
           caption = EXCLUDED.caption,
@@ -30,8 +31,9 @@ export async function upsertInstaPost(data) {
           image_url = EXCLUDED.image_url,
           images_url = EXCLUDED.images_url,
           is_carousel = EXCLUDED.is_carousel,
+          source_type = EXCLUDED.source_type,
           created_at = EXCLUDED.created_at`,
-    [client_id, shortcode, caption, comment_count, thumbnail_url, is_video, video_url, image_url, JSON.stringify(images_url), is_carousel, data.created_at || null]
+    [client_id, shortcode, caption, comment_count, thumbnail_url, is_video, video_url, image_url, JSON.stringify(images_url), is_carousel, source_type, data.created_at || null]
   );
 }
 
