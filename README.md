@@ -14,8 +14,11 @@ This service runs scheduled cron jobs to:
 ## Features
 
 - **Automated Fetching**: 
-  - Post fetch + engagement refresh mengikuti cron `5,30 6-16 * * *` + slot wajib `0 17 * * *` (06:05, 06:30, ... , 16:05, 16:30, 17:00 WIB)
-  - Engagement-only (likes & comments) mengikuti cron `30 17-21 * * *` dan `0 18-22 * * *` (17:30 s.d. 22:00 WIB)
+  - Trigger cron global: `0,30 6-21 * * *` + slot final `58 20-21 * * *` (06:00, 06:30, ..., 21:30, 20:58, 21:58 WIB)
+  - Gating post-fetch per client menggunakan `shouldFetchPostsForClient`:
+    - Segment A (`org` + `DITBINMAS`): post fetch sampai 20:30 + slot 20:58
+    - Segment B (`direktorat` selain `DITBINMAS`): post fetch sampai 21:30 + slot 21:58
+  - Refresh engagement (likes/comments) tetap berjalan di setiap trigger global untuk client yang akun sosmed-nya aktif
 - **Multi-Platform Support**: Instagram and TikTok
 - **Engagement Tracking**: Posts, likes, and comments
 - **Database Storage**: All data stored in PostgreSQL
@@ -89,20 +92,30 @@ npm run dev
 
 ## Cron Schedule
 
-The fetch job runs on the following schedule (Asia/Jakarta timezone):
+Cron `cronDirRequestFetchSosmed` berjalan dalam **dua layer jadwal** (timezone `Asia/Jakarta`):
 
-### Post Fetch + Engagement Refresh (06:05 - 17:00, termasuk slot wajib)
-- Cron gabungan: `5,30 6-16 * * *` + `0 17 * * *`
-- Runs at: 06:05, 06:30, 07:05, 07:30, ..., 16:05, 16:30, 17:00
-- Fetches Instagram posts, TikTok posts, Instagram likes, and TikTok comments
-- Slot 17:00 adalah fetch + pesan tugas scheduled wajib untuk semua client aktif
-- Sends task notifications when there are notable changes, plus hourly scheduled notifications during post-fetch period (hingga 17:59 WIB)
+### Layer 1 — Trigger Cron Global
+- Cron gabungan: `0,30 6-21 * * *` + `58 20-21 * * *`
+- Trigger terjadi pada: 06:00, 06:30, 07:00, 07:30, ..., 21:00, 21:30, ditambah slot 20:58 dan 21:58
+- Setiap trigger akan memproses semua client aktif (dengan batas concurrency/runtime internal)
 
-### Engagement Only (17:30 - 22:00)
-- Cron gabungan: `30 17-21 * * *` + `0 18-22 * * *`
-- Runs at: 17:30, 18:00, 18:30, ..., 21:30, 22:00
-- Only refreshes Instagram likes and TikTok comments (no post fetch)
-- Notifications remain change-driven; hourly scheduled sends are limited to post-fetch period
+### Layer 2 — Gating Post-Fetch Per Client (`shouldFetchPostsForClient`)
+- **Segment A**: client `org` dan `DITBINMAS`
+  - Post fetch aktif pada slot `:00`/`:30` dari 06:00 s.d. 20:30, plus slot 20:58
+- **Segment B**: client `direktorat` selain `DITBINMAS`
+  - Post fetch aktif pada slot `:00`/`:30` dari 06:00 s.d. 21:30, plus slot 21:58
+- Di luar slot post-fetch segment-nya, client tetap diproses untuk engagement refresh saja
+
+### Urutan Flow Per Client (setiap trigger)
+1. Cek apakah slot saat ini lolos gating post-fetch client (`shouldFetchPostsForClient`).
+2. Jika lolos gating, jalankan fetch post:
+   - Instagram post (`fetchAndStoreInstaContent`)
+   - TikTok post (`fetchAndStoreTiktokContent`)
+3. Setelah itu (atau langsung jika tidak lolos gating), tetap jalankan refresh engagement:
+   - Instagram likes (`handleFetchLikesInstagram`)
+   - TikTok comments (`handleFetchKomentarTiktokBatch`)
+
+Konsekuensi operasional: data post yang masuk manual di hari yang sama tetap bisa ikut terbaca saat tahap refresh likes/comments, karena refresh engagement selalu berjalan pada setiap trigger global untuk akun aktif, meskipun slot tersebut bukan slot fetch post untuk client terkait.
 
 
 ## Operational Notes
