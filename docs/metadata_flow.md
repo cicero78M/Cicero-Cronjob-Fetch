@@ -1,5 +1,5 @@
 # Cicero Flow Metadata
-*Last updated: 2026-02-18*
+*Last updated: 2026-02-20*
 
 This document outlines the flow of data and the main database tables used by the Cicero_V2 system. It provides an overview from the initial onboarding steps through to reporting and notifications.
 
@@ -72,4 +72,20 @@ Urutan field yang didukung saat ekstraksi username komentar:
 Semua nilai username dinormalisasi ke format konsisten `@lowercase` menggunakan helper normalisasi handle yang sama seperti modul lain.
 
 Selain komentar level utama, util juga menelusuri balasan bertingkat (`replies`, `reply_comments`, `children`, `sub_comments`, dll.) untuk mencegah kehilangan user yang hanya muncul di nested thread.
+
+
+## 6. Source Type Precedence (Instagram & TikTok)
+
+Untuk mencegah post manual tertimpa hasil cron fetch, aturan upsert pada `insta_post` dan `tiktok_post` menggunakan precedence berikut di `ON CONFLICT ... DO UPDATE`:
+
+- Jika row existing sudah `source_type = 'manual_input'`, maka nilai `source_type` **tetap manual_input**.
+- Jika row existing bukan manual input, maka `source_type` mengikuti nilai `EXCLUDED.source_type` (contoh: `cron_fetch`).
+
+Implementasi SQL menggunakan pola `CASE WHEN <table>.source_type = 'manual_input' THEN <table>.source_type ELSE EXCLUDED.source_type END`.
+
+Dampak ke safe delete filter:
+- `filterOfficialInstagramShortcodes` hanya meloloskan kandidat hapus dengan `source_type = 'cron_fetch'`.
+- `filterOfficialTiktokVideoIds` menolak kandidat hapus dengan `source_type = 'manual_input'`.
+
+Dengan kombinasi ini, post yang diinput manual tetap terlindungi dari overwrite source type maupun dari kandidat auto-delete cron.
 

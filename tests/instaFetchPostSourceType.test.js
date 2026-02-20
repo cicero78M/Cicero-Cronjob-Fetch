@@ -124,6 +124,29 @@ test('auto-delete hanya menghapus post source_type cron_fetch', async () => {
   expect(deleteInstaPostClientsCall[1][0]).toEqual(['CRON001']);
 });
 
+
+test('upsert query cron menjaga source_type manual_input pada konflik shortcode', async () => {
+  const todayUnix = Math.floor(Date.now() / 1000);
+  mockFetchInstagramPosts.mockResolvedValueOnce([
+    {
+      code: 'MANUAL-LOCKED',
+      taken_at: todayUnix,
+      comment_count: 2,
+      like_count: 3,
+    },
+  ]);
+
+  await fetchAndStoreInstaContent(null, null, null, 'clientA');
+
+  const upsertCall = mockQuery.mock.calls.find(([sql]) =>
+    sql.includes('INSERT INTO insta_post') && sql.includes('ON CONFLICT (shortcode) DO UPDATE'),
+  );
+
+  expect(upsertCall).toBeTruthy();
+  expect(upsertCall[0]).toContain("WHEN insta_post.source_type = 'manual_input' THEN insta_post.source_type");
+  expect(upsertCall[1][11]).toBe('cron_fetch');
+});
+
 test('manual input hari ini tetap memakai source_type manual_input dan created_at waktu input', async () => {
   const yesterday = Math.floor(Date.now() / 1000) - 86400;
   mockFetchInstagramPostInfo.mockResolvedValue({
