@@ -65,6 +65,20 @@ describe('fetchAndStoreTiktokContent timezone handling', () => {
           },
         ],
       })
+      .mockResolvedValueOnce({
+        rows: [{ client_tiktok: '@clienta', tiktok_secuid: 'SEC123' }],
+      })
+      .mockResolvedValueOnce({ rows: [{ table_name: 'tiktok_snapshots' }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            video_id: 'old-1',
+            author_username: '@clienta',
+            author_secuid: 'SEC123',
+            source_type: 'cron_fetch',
+          },
+        ],
+      })
       .mockResolvedValueOnce({ rowCount: 1 })
       .mockResolvedValueOnce({
         rows: [{ client_id: 'CLIENT_A', client_tiktok: '@clienta' }],
@@ -420,13 +434,30 @@ describe('fetchAndStoreTiktokContent delete-on-api-success', () => {
           },
         ],
       })
-      // 3: DELETE (deleteVideoIds for oldVideoId)
+      // 3: official account lookup for filter
+      .mockResolvedValueOnce({
+        rows: [{ client_tiktok: '@clientdel', tiktok_secuid: 'SEC_DEL' }],
+      })
+      // 4: tiktok_snapshots exists
+      .mockResolvedValueOnce({ rows: [{ table_name: 'tiktok_snapshots' }] })
+      // 5: candidate row is official cron content
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            video_id: oldVideoId,
+            author_username: '@clientdel',
+            author_secuid: 'SEC_DEL',
+            source_type: 'cron_fetch',
+          },
+        ],
+      })
+      // 6: DELETE (deleteVideoIds for oldVideoId)
       .mockResolvedValueOnce({ rowCount: 1 })
-      // 4: clientsForMap
+      // 7: clientsForMap
       .mockResolvedValueOnce({
         rows: [{ client_id: 'CLIENT_DEL', client_tiktok: '@clientdel' }],
       })
-      // 5: final summary
+      // 8: final summary
       .mockResolvedValueOnce({ rows: [] });
 
     await fetchAndStoreTiktokContent('CLIENT_DEL');
@@ -445,4 +476,91 @@ describe('fetchAndStoreTiktokContent delete-on-api-success', () => {
       'client_del',
     ]);
   });
+
+
+  test('keeps manual_input and deletes only cron_fetch for mixed same-day leftovers', async () => {
+    jest.useFakeTimers();
+    const systemTime = new Date('2024-03-10T07:00:00Z');
+    jest.setSystemTime(systemTime);
+
+    const expectedJakartaDate = new Date().toLocaleDateString('en-CA', {
+      timeZone: 'Asia/Jakarta',
+    });
+
+    const mockQuery = jest.fn();
+    const mockUpsert = jest.fn().mockResolvedValue();
+
+    jest.unstable_mockModule('../src/db/index.js', () => ({ query: mockQuery }));
+    jest.unstable_mockModule('../src/model/clientModel.js', () => ({ update: jest.fn() }));
+    jest.unstable_mockModule('../src/model/tiktokPostModel.js', () => ({ upsertTiktokPosts: mockUpsert }));
+    jest.unstable_mockModule('../src/middleware/debugHandler.js', () => ({ sendDebug: jest.fn() }));
+    jest.unstable_mockModule('../src/service/tiktokApi.js', () => ({
+      fetchTiktokPosts: jest.fn().mockResolvedValue([]),
+      fetchTiktokPostsBySecUid: jest.fn().mockResolvedValue([
+        {
+          id: 'yesterday-video',
+          createTime: Math.floor(new Date('2024-03-09T10:00:00Z').getTime() / 1000),
+          stats: { diggCount: 10, commentCount: 3 },
+        },
+      ]),
+      fetchTiktokInfo: jest.fn(),
+      fetchTiktokPostDetail: jest.fn(),
+    }));
+
+    const { fetchAndStoreTiktokContent } = await import(
+      '../src/handler/fetchpost/tiktokFetchPost.js'
+    );
+
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ video_id: 'cron-orphan' }, { video_id: 'manual-orphan' }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'CLIENT_MIX',
+            client_tiktok: '@clientmix',
+            tiktok_secuid: 'SEC_MIX',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ client_tiktok: '@clientmix', tiktok_secuid: 'SEC_MIX' }],
+      })
+      .mockResolvedValueOnce({ rows: [{ table_name: 'tiktok_snapshots' }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            video_id: 'cron-orphan',
+            author_username: '@clientmix',
+            author_secuid: 'SEC_MIX',
+            source_type: 'cron_fetch',
+          },
+          {
+            video_id: 'manual-orphan',
+            author_username: '@clientmix',
+            author_secuid: 'SEC_MIX',
+            source_type: 'manual_input',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rowCount: 1 })
+      .mockResolvedValueOnce({
+        rows: [{ client_id: 'CLIENT_MIX', client_tiktok: '@clientmix' }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await fetchAndStoreTiktokContent('CLIENT_MIX');
+
+    expect(mockUpsert).not.toHaveBeenCalled();
+
+    const deleteCall = mockQuery.mock.calls.find((call) =>
+      call[0].startsWith('DELETE FROM tiktok_post')
+    );
+    expect(deleteCall).toBeDefined();
+    expect(deleteCall[1]).toEqual([
+      ['cron-orphan'],
+      expectedJakartaDate,
+      'client_mix',
+    ]);
+  });
+
 });

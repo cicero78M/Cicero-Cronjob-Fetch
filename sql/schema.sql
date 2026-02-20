@@ -294,7 +294,8 @@ CREATE TABLE tiktok_post (
   caption TEXT,
   like_count INT,
   comment_count INT,
-  created_at TIMESTAMP WITH TIME ZONE
+  created_at TIMESTAMP WITH TIME ZONE,
+  source_type TEXT NOT NULL DEFAULT 'cron_fetch'
 );
 
 CREATE TABLE tiktok_comment (
