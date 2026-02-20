@@ -13,7 +13,7 @@ Sumber implementasi:
 - Cron gabungan: `0,30 6-21 * * *` + final `58 20-21 * * *`
 - Jam jalan: **06:00, 06:30, ... , 20:00, 20:30, 20:58, 21:00, 21:30, 21:58**
 - Aksi tiap run:
-  - Refresh likes Instagram
+  - Refresh likes Instagram (membaca post harian dari `insta_post_clients` + fallback post `manual_input` milik client yang sama agar hasil input manual tetap ter-refresh)
   - Refresh komentar TikTok
   - Fetch post Instagram/TikTok hanya bila lolos gating slot per segmen client
 
