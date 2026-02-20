@@ -204,7 +204,7 @@ export async function handleFetchLikesInstagram(waClient, chatId, client_id, opt
     sendDebug({
       tag: "IG FETCH LIKES ERROR",
       msg: (err && err.message) || String(err),
-      client_id,
+      client_id: client_id || null,
     });
   }
 }

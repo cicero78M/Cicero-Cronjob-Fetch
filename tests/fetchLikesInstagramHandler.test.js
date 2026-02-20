@@ -51,3 +51,21 @@ test('adds missing exception usernames to likes result', async () => {
   const likes = JSON.parse(likesJson);
   expect(likes).toEqual(expect.arrayContaining(['user1', 'user2']));
 });
+
+test('logs main query error with valid client id and without ReferenceError', async () => {
+  const mainError = new Error('db unavailable');
+  mockQuery.mockRejectedValueOnce(mainError);
+
+  await expect(
+    handleFetchLikesInstagram(null, null, 'client-main-error'),
+  ).resolves.toBeUndefined();
+
+  expect(mockSendDebug).toHaveBeenCalledTimes(1);
+  expect(mockSendDebug).toHaveBeenCalledWith(
+    expect.objectContaining({
+      tag: 'IG FETCH LIKES ERROR',
+      msg: 'db unavailable',
+      client_id: 'client-main-error',
+    }),
+  );
+});

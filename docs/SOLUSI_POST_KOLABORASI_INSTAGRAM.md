@@ -75,6 +75,7 @@ Dengan aturan ini, input manual operasional tetap aman saat cron melakukan sinkr
    - `filterOfficialInstagramShortcodes()` menggunakan junction table
 
 5. `src/handler/fetchengagement/fetchLikesInstagram.js` - Handler likes diperbarui untuk JOIN dengan junction table
+   - Logging error utama (`catch` terluar) kini konsisten memakai identifier `client_id` dari parameter handler sehingga payload debug tetap valid saat query awal gagal.
 
 ### Model Data
 6. `src/model/instaPostModel.js` - Semua query diperbarui untuk JOIN dengan junction table
