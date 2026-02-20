@@ -114,6 +114,8 @@ dirrequest tanpa langkah tambahan.
   `toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' })` agar hasil
   harian tetap konsisten saat server tidak berjalan di zona WIB.
 - Standar penyimpanan `tiktok_post.created_at` kini memakai **TIMESTAMPTZ (UTC canonical)**. Konversi ke WIB hanya dilakukan saat filter/query pelaporan (`AT TIME ZONE 'Asia/Jakarta'`) agar timestamp mentah tidak lagi ambigu ketika dibaca lintas environment.
+- Sinkronisasi fetch TikTok kini menandai asal data pada `tiktok_post.source_type`: `manual_input` untuk konten dari `fetchAndStoreSingleTiktokPost()` dan `cron_fetch` untuk konten dari proses cron/auto fetch.
+- Prioritas proteksi konten manual diperketat: proses pembersihan hasil sinkronisasi akun official hanya boleh menghapus kandidat `cron_fetch`; konten `manual_input` tetap dipertahankan walau username/secUid cocok akun official dan tidak muncul lagi di hasil fetch harian.
 - Alur menu dapat memasok `referenceDate` (mis. menyimpan `session.referenceDate`
   atau `session.dirRequestReferenceDate`) untuk memaksa label periode, rentang
   minggu, serta parameter query memakai tanggal eksekusi yang diinginkan.

@@ -161,6 +161,7 @@ export async function fetchAndStoreSingleTiktokPost(clientId, videoInput) {
     created_at: createdAt,
     like_count: likeCount,
     comment_count: commentCount,
+    source_type: 'manual_input',
   };
 
   await upsertTiktokPosts(dbClientId, [postPayload]);
@@ -255,7 +256,8 @@ async function filterOfficialTiktokVideoIds(videoIds = [], clientId = null) {
               NULLIF(TRIM(ts.username), ''),
               NULLIF(TRIM(c.client_tiktok), '')
             ) AS author_username,
-            NULLIF(TRIM(ts.author_secuid), '') AS author_secuid
+            NULLIF(TRIM(ts.author_secuid), '') AS author_secuid,
+            COALESCE(NULLIF(TRIM(tp.source_type), ''), 'cron_fetch') AS source_type
        FROM tiktok_post tp
        LEFT JOIN tiktok_snapshots ts ON ts.video_id = tp.video_id
        LEFT JOIN clients c ON c.client_id = tp.client_id
@@ -266,6 +268,9 @@ async function filterOfficialTiktokVideoIds(videoIds = [], clientId = null) {
 
   const safeToDelete = candidateRes.rows
     .filter((row) => {
+      const sourceType = String(row.source_type || '').trim().toLowerCase();
+      if (sourceType === 'manual_input') return false;
+
       const rowUsername = normalizeHandle(row.author_username);
       const rowSecUid = String(row.author_secuid || "").trim();
       if (officialSecUid && rowSecUid && rowSecUid === officialSecUid) return true;
@@ -513,6 +518,7 @@ export async function fetchAndStoreTiktokContent(
         like_count:
           post.stats?.diggCount ?? post.digg_count ?? post.like_count ?? 0,
         comment_count: post.stats?.commentCount ?? post.comment_count ?? 0,
+        source_type: 'cron_fetch',
       };
 
       fetchedVideoIdsToday.push(toSave.video_id);
@@ -533,12 +539,17 @@ export async function fetchAndStoreTiktokContent(
 
   // Hapus hanya jika ada minimal 1 fetch sukses dari API (konten berhasil diambil)
   if (hasSuccessfulFetch) {
-    const videoIdsToDelete = dbVideoIdsToday.filter(
+    const deletionCandidates = dbVideoIdsToday.filter(
       (x) => !fetchedVideoIdsToday.includes(x)
+    );
+    const videoIdsToDelete = await filterOfficialTiktokVideoIds(
+      deletionCandidates,
+      targetClientId
     );
     sendDebug({
       tag: "TIKTOK SYNC",
-      msg: `Akan menghapus video_id yang tidak ada hari ini: jumlah=${videoIdsToDelete.length}`,
+      msg: `Akan menghapus video_id yang tidak ada hari ini: kandidat=${deletionCandidates.length}, lolos filter=${videoIdsToDelete.length}`,
+      client_id: targetClientId || undefined,
     });
     await deleteVideoIds(videoIdsToDelete, targetClientId);
   } else {

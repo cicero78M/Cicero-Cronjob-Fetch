@@ -72,14 +72,15 @@ export async function upsertTiktokPosts(client_id, posts) {
   if (!Array.isArray(posts)) return;
   for (const post of posts) {
     await query(
-      `INSERT INTO tiktok_post (client_id, video_id, caption, like_count, comment_count, created_at)
-       VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, NOW()))
+      `INSERT INTO tiktok_post (client_id, video_id, caption, like_count, comment_count, created_at, source_type)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, NOW()), $7)
        ON CONFLICT (video_id) DO UPDATE
          SET client_id = EXCLUDED.client_id,
              caption = EXCLUDED.caption,
              like_count = EXCLUDED.like_count,
              comment_count = EXCLUDED.comment_count,
-             created_at = EXCLUDED.created_at`,
+             created_at = EXCLUDED.created_at,
+             source_type = EXCLUDED.source_type`,
       [
         client_id,
         post.video_id || post.id,
@@ -89,6 +90,7 @@ export async function upsertTiktokPosts(client_id, posts) {
         normalizeUtcCreatedAt(
           post.created_at || post.create_time || post.createTime || null
         ),
+        post.source_type || 'cron_fetch',
       ]
     );
   }
@@ -113,19 +115,21 @@ export async function upsertTiktokPostWithStatus({
   like_count,
   comment_count,
   created_at,
+  source_type,
 }) {
   const normalizedVideoId = (video_id || "").trim();
   if (!normalizedVideoId) return { inserted: false, updated: false };
 
   const res = await query(
-    `INSERT INTO tiktok_post (client_id, video_id, caption, like_count, comment_count, created_at)
-     VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, NOW()))
+    `INSERT INTO tiktok_post (client_id, video_id, caption, like_count, comment_count, created_at, source_type)
+     VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, NOW()), $7)
      ON CONFLICT (video_id) DO UPDATE
        SET client_id = EXCLUDED.client_id,
            caption = EXCLUDED.caption,
            like_count = EXCLUDED.like_count,
            comment_count = EXCLUDED.comment_count,
-           created_at = EXCLUDED.created_at
+           created_at = EXCLUDED.created_at,
+           source_type = EXCLUDED.source_type
      RETURNING xmax = '0'::xid AS inserted`,
     [
       client_id,
@@ -134,6 +138,7 @@ export async function upsertTiktokPostWithStatus({
       toInteger(like_count) ?? 0,
       toInteger(comment_count) ?? 0,
       normalizeUtcCreatedAt(created_at || null),
+      source_type || 'cron_fetch',
     ]
   );
 
