@@ -216,6 +216,40 @@ export async function getPostsTodayByClient(client_id) {
   return res.rows;
 }
 
+export async function getTaskListPostsByClient(client_id) {
+  const normalizedClientId = String(client_id || '').trim().toLowerCase();
+  if (!normalizedClientId) return [];
+
+  const res = await query(
+    `WITH scoped_posts AS (
+      SELECT DISTINCT ON (p.shortcode)
+             p.*,
+             CASE
+               WHEN jsonb_typeof(il.likes) = 'array' THEN jsonb_array_length(il.likes)
+               ELSE 0
+             END AS like_count
+      FROM insta_post p
+      LEFT JOIN insta_post_clients pc ON pc.shortcode = p.shortcode
+      LEFT JOIN insta_like il ON il.shortcode = p.shortcode
+      WHERE (
+        LOWER(TRIM(pc.client_id)) = $1
+        AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date
+      )
+      OR (
+        LOWER(TRIM(p.client_id)) = $1
+        AND COALESCE(NULLIF(TRIM(p.source_type), ''), 'cron_fetch') = 'manual_input'
+      )
+      ORDER BY p.shortcode, p.created_at DESC
+    )
+    SELECT *
+    FROM scoped_posts
+    ORDER BY created_at ASC, shortcode ASC`,
+    [normalizedClientId]
+  );
+
+  return res.rows;
+}
+
 export async function getPostsByClientId(clientId) {
   const res = await query(
     `SELECT DISTINCT p.*

@@ -6,12 +6,14 @@ jest.unstable_mockModule('../src/repository/db.js', () => ({
 }));
 
 let findByClientId;
+let getTaskListPostsByClient;
 let getShortcodesTodayByClient;
 let getShortcodesYesterdayByClient;
 let countPostsByClient;
 beforeAll(async () => {
   ({
     findByClientId,
+    getTaskListPostsByClient,
     getShortcodesTodayByClient,
     getShortcodesYesterdayByClient,
     countPostsByClient
@@ -29,6 +31,22 @@ test('findByClientId uses DISTINCT ON to avoid duplicates', async () => {
     expect.stringContaining('DISTINCT ON (shortcode)'),
     ['c1']
   );
+});
+
+test('getTaskListPostsByClient includes collaboration posts and manual_input posts', async () => {
+  mockQuery.mockResolvedValueOnce({ rows: [] });
+
+  await getTaskListPostsByClient('CLIENT_A');
+
+  expect(mockQuery).toHaveBeenCalledWith(
+    expect.stringContaining('COALESCE(NULLIF(TRIM(p.source_type), \'\'), \'cron_fetch\') = \'manual_input\''),
+    ['client_a']
+  );
+
+  const sql = mockQuery.mock.calls[0][0];
+  expect(sql).toContain('LEFT JOIN insta_post_clients pc ON pc.shortcode = p.shortcode');
+  expect(sql).toContain('LOWER(TRIM(pc.client_id)) = $1');
+  expect(sql).toContain('LOWER(TRIM(p.client_id)) = $1');
 });
 
 test('getShortcodesTodayByClient filters by client for non-direktorat', async () => {

@@ -43,6 +43,12 @@ Untuk **notifikasi terjadwal daftar tugas**, setiap item konten kini juga memuat
 - `Likes: <angka format id-ID> | Komentar: <angka format id-ID>`
 - Nilai null/undefined akan fallback aman (`Upload: -`, `Likes: -` untuk Instagram bila data likes tidak tersedia, dan count lain menjadi `0`).
 
+Daftar tugas Instagram pada notifikasi terjadwal disusun dari dua sumber agar operasional tidak kehilangan tugas:
+- konten relasi tugas aktif (`insta_post_clients`) untuk client terkait;
+- konten `manual_input` pada `insta_post` walaupun bukan hasil sinkronisasi akun official.
+
+Dengan aturan ini, konten hasil input manual yang valid tetap muncul pada `📋 Daftar Tugas` selama masih aktif di data harian client.
+
 **Contoh pesan penambahan Instagram:**
 ```
 📸 *Tugas Instagram Baru - POLDA JATIM*

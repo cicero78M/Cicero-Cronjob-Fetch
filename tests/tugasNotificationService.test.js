@@ -13,6 +13,7 @@ jest.unstable_mockModule('../src/utils/waHelper.js', () => ({
 
 jest.unstable_mockModule('../src/model/instaPostModel.js', () => ({
   getPostsTodayByClient: jest.fn(),
+  getTaskListPostsByClient: jest.fn(),
 }));
 
 jest.unstable_mockModule('../src/model/tiktokPostModel.js', () => ({
@@ -27,7 +28,7 @@ jest.unstable_mockModule('../src/model/waNotificationOutboxModel.js', () => ({
 const { sendTugasNotification, buildChangeSummary, enqueueTugasNotification } = await import('../src/service/tugasNotificationService.js');
 const { findById } = await import('../src/model/clientModel.js');
 const { safeSendMessage } = await import('../src/utils/waHelper.js');
-const { getPostsTodayByClient: getPostsTodayByClientInsta } = await import('../src/model/instaPostModel.js');
+const { getTaskListPostsByClient: getTaskListPostsByClientInsta } = await import('../src/model/instaPostModel.js');
 const { getPostsTodayByClient: getPostsTodayByClientTiktok } = await import('../src/model/tiktokPostModel.js');
 const { enqueueOutboxEvents } = await import('../src/model/waNotificationOutboxModel.js');
 
@@ -211,13 +212,13 @@ describe('tugasNotificationService', () => {
       findById.mockResolvedValue(mockClient);
       safeSendMessage.mockResolvedValue(true);
       // Mock post fetching functions to return empty arrays by default
-      getPostsTodayByClientInsta.mockResolvedValue([]);
+      getTaskListPostsByClientInsta.mockResolvedValue([]);
       getPostsTodayByClientTiktok.mockResolvedValue([]);
     });
 
     it('should send scheduled notification with task counts', async () => {
       // Mock actual posts to match expected counts
-      getPostsTodayByClientInsta.mockResolvedValue([
+      getTaskListPostsByClientInsta.mockResolvedValue([
         { shortcode: 'post1', caption: 'Post 1' },
         { shortcode: 'post2', caption: 'Post 2' },
         { shortcode: 'post3', caption: 'Post 3' },
@@ -299,7 +300,7 @@ describe('tugasNotificationService', () => {
 
 
     it('should build scheduled payload safely when generated timestamp formatter receives default date', async () => {
-      getPostsTodayByClientInsta.mockResolvedValue([]);
+      getTaskListPostsByClientInsta.mockResolvedValue([]);
       getPostsTodayByClientTiktok.mockResolvedValue([]);
 
       const changes = {
@@ -341,7 +342,7 @@ describe('tugasNotificationService', () => {
     });
 
     it('should keep scheduled message totals based on fetched posts without count options', async () => {
-      getPostsTodayByClientInsta.mockResolvedValue([
+      getTaskListPostsByClientInsta.mockResolvedValue([
         { shortcode: 'post1', caption: 'Post 1' },
         { shortcode: 'post2', caption: 'Post 2' },
       ]);
@@ -369,7 +370,7 @@ describe('tugasNotificationService', () => {
 
     it('should include Instagram and TikTok links grouped by platform in scheduled notification', async () => {
       // Mock Instagram posts
-      getPostsTodayByClientInsta.mockResolvedValue([
+      getTaskListPostsByClientInsta.mockResolvedValue([
         {
           shortcode: 'abc123',
           caption: 'Test Instagram post 1',
@@ -450,7 +451,7 @@ describe('enqueueTugasNotification', () => {
   beforeEach(() => {
     findById.mockResolvedValue(mockClient);
     enqueueOutboxEvents.mockResolvedValue({ insertedCount: 1, duplicatedCount: 0 });
-    getPostsTodayByClientInsta.mockResolvedValue([]);
+    getTaskListPostsByClientInsta.mockResolvedValue([]);
     getPostsTodayByClientTiktok.mockResolvedValue([]);
   });
 
@@ -477,7 +478,7 @@ describe('enqueueTugasNotification', () => {
 
   it('enqueues deletion notice with deleted links and latest task list update', async () => {
     enqueueOutboxEvents.mockResolvedValue({ insertedCount: 2, duplicatedCount: 0 });
-    getPostsTodayByClientInsta.mockResolvedValue([
+    getTaskListPostsByClientInsta.mockResolvedValue([
       { shortcode: 'latest1', caption: 'Latest post' },
     ]);
     getPostsTodayByClientTiktok.mockResolvedValue([]);
