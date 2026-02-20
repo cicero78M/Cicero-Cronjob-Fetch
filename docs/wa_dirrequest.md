@@ -112,6 +112,14 @@ dirrequest tanpa langkah tambahan.
 - Setiap personel ditampilkan dengan label pelaksanaan yang jelas, misalnya
   `- Nama, Pelaksanaan: 3/5`, sehingga operator dapat melihat jumlah konten
   yang sudah dilike oleh masing-masing personel secara cepat.
+- Query sumber konten untuk rekap likes harian kini menyamakan mekanisme
+  CronJob-Report: mode direktorat menggabungkan post berbasis role
+  (`insta_post_roles`) dengan post manual milik client (`source_type`
+  `manual_input`/`manual_fetch`) agar konten input manual tetap terbaca pada
+  menu **6**.
+- Filter tanggal `insta_post.created_at` memakai pola
+  `((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Jakarta')::date` agar
+  penentuan hari berjalan konsisten saat timestamp disimpan dalam UTC.
 
 ## Absensi Komentar TikTok Kasat Binmas
 - Submenu Absensi Komentar TikTok mengikuti tanggal **Asia/Jakarta (WIB)**.
