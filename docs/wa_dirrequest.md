@@ -51,6 +51,20 @@ Input **4️⃣3️⃣** kini dikenali langsung oleh bot tanpa balasan *"Pilihan
 valid"*, sehingga operator dapat memicu rekap TikTok all data dari menu utama
 dirrequest tanpa langkah tambahan.
 
+## Catatan Integrasi Handler TikTok (Menu 1️⃣4️⃣ dan 1️⃣6️⃣)
+- Menu **1️⃣4️⃣** (`fetch + absensi komentar TikTok`) pada service dirrequest kini
+  memanggil fungsi yang memang diekspor module handler:
+  `fetchAndStoreTiktokContent(targetClientId, waClient, chatId)` dari
+  `src/handler/fetchpost/tiktokFetchPost.js` dan
+  `handleFetchKomentarTiktokBatch(waClient, chatId, targetClientId)` dari
+  `src/handler/fetchengagement/fetchCommentTiktok.js`.
+- Urutan argumen fetch konten TikTok sudah diseragamkan menjadi
+  `(targetClientId, waClient, chatId)` agar konsisten dengan signature fungsi
+  aktual dan mencegah kegagalan dynamic import/pemanggilan saat menu dieksekusi.
+- Menu **1️⃣6️⃣** (`fetch post TikTok`) juga menggunakan
+  `fetchAndStoreTiktokContent(targetClientId, waClient, chatId)` sehingga jalur
+  fetch post mengikuti export yang tersedia di handler TikTok.
+
 ## Rekaman Snapshot Engagement per 30 Menit
 - Setiap pengambilan likes Instagram dan komentar TikTok yang berjalan lewat
   jadwal 30 menit kini juga menyimpan salinan ke tabel arsip
