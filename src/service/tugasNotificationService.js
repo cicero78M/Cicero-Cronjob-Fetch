@@ -2,7 +2,7 @@
 
 import { findById as findClientById } from '../model/clientModel.js';
 import { safeSendMessage } from '../utils/waHelper.js';
-import { getPostsTodayByClient as getPostsTodayByClientInsta } from '../model/instaPostModel.js';
+import { getTaskListPostsByClient as getTaskListPostsByClientInsta } from '../model/instaPostModel.js';
 import { getPostsTodayByClient as getPostsTodayByClientTiktok } from '../model/tiktokPostModel.js';
 import { enqueueOutboxEvents } from '../model/waNotificationOutboxModel.js';
 import { createHash } from 'crypto';
@@ -314,7 +314,7 @@ function normalizeGroupId(groupId) {
  */
 async function getActiveInstaPosts(clientId) {
   try {
-    const posts = await getPostsTodayByClientInsta(clientId);
+    const posts = await getTaskListPostsByClientInsta(clientId);
     return posts || [];
   } catch (error) {
     console.error(`[${LOG_TAG}] Error fetching Instagram posts:`, error.message);
