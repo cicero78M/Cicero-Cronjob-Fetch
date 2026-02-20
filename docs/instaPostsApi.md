@@ -17,8 +17,15 @@ GET /api/insta/posts?client_id=KEDIRI
 - Response mengikuti format `sendSuccess` (lihat `src/utils/response.js`).
 - Sinkronisasi cron fetch post akan menghapus konten hari ini yang tidak lagi ada di hasil fetch, termasuk membersihkan data terkait (likes, komentar, dan audit like) agar tidak terkena kendala foreign key saat post dihapus.
 - Seluruh proses sinkronisasi “hari ini” pada modul fetch (pengambilan shortcode hari ini, delete kandidat hari ini, dan summary harian) juga memakai basis tanggal **WIB (Asia/Jakarta)** yang sama.
-- Penghapusan otomatis hanya berlaku untuk konten dari **username akun resmi** yang tersimpan di tabel `clients` (`client_insta` untuk Instagram, `client_tiktok`/`tiktok_secuid` untuk TikTok). Konten hasil input manual/non-resmi tidak dihapus otomatis oleh proses sinkronisasi.
+- Setiap post di `insta_post` kini memiliki `source_type` untuk menandai asal data: `cron_fetch` (hasil sinkronisasi cron/WA fetch reguler) atau `manual_input` (hasil input manual `fetchSinglePostKhusus`).
+- Penghapusan otomatis hanya berlaku untuk konten dari **username akun resmi** yang tersimpan di tabel `clients` (`client_insta` untuk Instagram, `client_tiktok`/`tiktok_secuid` untuk TikTok) **dan** `source_type = cron_fetch`. Konten `manual_input` tidak akan menjadi kandidat auto-delete.
 - Modul fetch IG menyimpan metadata fetch terstruktur pada log (`IG FETCH META`/`IG SAFE DELETE`) yang mencakup jumlah item mentah, status API, durasi fetch, kode error, jumlah duplikat, dan indikator inkonsistensi.
+- Alur sinkronisasi Instagram harian (ringkas):
+  1. Ambil shortcode hari ini dari DB (`insta_post` + `insta_post_clients`) berbasis WIB.
+  2. Fetch data terbaru dari RapidAPI, lalu upsert post hari ini dengan `source_type=cron_fetch`.
+  3. Hitung kandidat hapus (`DB hari ini` dikurangi `hasil fetch hari ini`).
+  4. Filter kandidat agar hanya shortcode dari akun resmi dan `source_type=cron_fetch`.
+  5. Jalankan safe-delete guard (partial response + threshold), lalu hapus data yang lolos filter (likes/komentar/audit + post/junction).
 - Aturan **safe delete** pada sinkronisasi fetch IG:
   - Delete otomatis di-skip bila ada indikasi response parsial (flag partial error, item mentah turun drastis dibanding run sebelumnya, shortcode duplikat, atau item tidak konsisten).
   - Delete otomatis ditunda bila kandidat hapus melebihi ambang aman client (`IG_SAFE_DELETE_THRESHOLD_PERCENT`, default 40%, dapat dioverride per client via `IG_SAFE_DELETE_THRESHOLD_BY_CLIENT`).

@@ -156,6 +156,7 @@ Stores Instagram posts fetched for a client.
 - `image_url` – link to image file
 - `images_url` – JSON array of all image URLs when the post is a carousel
 - `is_carousel` – boolean indicating whether the post contains multiple images
+- `source_type` – origin marker of post ingestion (`cron_fetch` for scheduled/regular sync, `manual_input` for manual single-post insert)
 - `created_at` – timestamp of the post
 
 ### `insta_post_clients`
