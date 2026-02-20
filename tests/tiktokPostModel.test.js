@@ -9,12 +9,13 @@ jest.unstable_mockModule('../src/repository/db.js', () => ({
 let getPostsTodayByClient;
 let getVideoIdsTodayByClient;
 let countPostsByClient;
+let upsertTiktokPosts;
 
 const toJakartaDateInput = (date) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(date);
 
 beforeAll(async () => {
-  ({ getPostsTodayByClient, getVideoIdsTodayByClient, countPostsByClient } = await import(
+  ({ getPostsTodayByClient, getVideoIdsTodayByClient, countPostsByClient, upsertTiktokPosts } = await import(
     '../src/model/tiktokPostModel.js'
   ));
 });
@@ -152,4 +153,28 @@ test('getVideoIdsTodayByClient treats late-night UTC as same Jakarta day', async
     ['client 4', expectedJakarta]
   );
   expect(expectedJakarta).toBe('2024-03-01');
+});
+
+
+test('upsertTiktokPosts writes internal created_at and original_created_at separately', async () => {
+  mockQuery.mockResolvedValueOnce({ rows: [] });
+
+  await upsertTiktokPosts('CLIENT_X', [
+    {
+      video_id: 'vid-001',
+      caption: 'caption',
+      like_count: 5,
+      comment_count: 1,
+      created_at: '2024-03-10T08:30:00.000Z',
+      original_created_at: '2024-03-09T08:30:00.000Z',
+      source_type: 'manual_input',
+    },
+  ]);
+
+  expect(mockQuery).toHaveBeenCalledTimes(1);
+  const [sql, params] = mockQuery.mock.calls[0];
+  expect(sql).toContain('original_created_at');
+  expect(params[5]).toBe('2024-03-10T08:30:00.000Z');
+  expect(params[6]).toBe('2024-03-09T08:30:00.000Z');
+  expect(params[7]).toBe('manual_input');
 });
