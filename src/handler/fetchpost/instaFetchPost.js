@@ -492,8 +492,8 @@ export async function fetchAndStoreInstaContent(
         client_id: client.id
       });
       await query(
-        `INSERT INTO insta_post (client_id, shortcode, caption, comment_count, like_count, thumbnail_url, is_video, video_url, image_url, images_url, is_carousel, source_type, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,to_timestamp($13))
+        `INSERT INTO insta_post (client_id, shortcode, caption, comment_count, like_count, thumbnail_url, is_video, video_url, image_url, images_url, is_carousel, source_type, created_at, original_created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW(),to_timestamp($13))
          ON CONFLICT (shortcode) DO UPDATE
           SET caption = EXCLUDED.caption,
               comment_count = EXCLUDED.comment_count,
@@ -505,7 +505,8 @@ export async function fetchAndStoreInstaContent(
               images_url = EXCLUDED.images_url,
               is_carousel = EXCLUDED.is_carousel,
               source_type = EXCLUDED.source_type,
-              created_at = to_timestamp($13)`,
+              created_at = EXCLUDED.created_at,
+              original_created_at = EXCLUDED.original_created_at`,
         [
           toSave.client_id,
           toSave.shortcode,
@@ -694,6 +695,10 @@ export async function fetchSinglePostKhusus(linkOrCode, clientId) {
   if (!code) throw new Error('invalid link');
   const info = await fetchInstagramPostInfo(code);
   if (!info) throw new Error('post not found');
+  const inputCreatedAt = new Date().toISOString();
+  const originalCreatedAt = info.taken_at
+    ? new Date(info.taken_at * 1000).toISOString()
+    : null;
   const data = {
     client_id: clientId,
     shortcode: code,
@@ -711,7 +716,8 @@ export async function fetchSinglePostKhusus(linkOrCode, clientId) {
       : null,
     is_carousel: Array.isArray(info.carousel_media) && info.carousel_media.length > 1,
     source_type: "manual_input",
-    created_at: info.taken_at ? new Date(info.taken_at * 1000).toISOString() : null
+    created_at: inputCreatedAt,
+    original_created_at: originalCreatedAt,
   }; 
   await upsertInstaPostKhusus(data);
   await upsertInstaPost(data);
