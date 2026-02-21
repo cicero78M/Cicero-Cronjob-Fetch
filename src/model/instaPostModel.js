@@ -240,6 +240,7 @@ export async function getTaskListPostsByClient(client_id) {
       OR (
         LOWER(TRIM(p.client_id)) = $1
         AND COALESCE(NULLIF(TRIM(p.source_type), ''), 'cron_fetch') = 'manual_input'
+        AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date
       )
       ORDER BY p.shortcode, p.created_at DESC
     )
