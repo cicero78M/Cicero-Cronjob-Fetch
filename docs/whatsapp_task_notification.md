@@ -49,6 +49,8 @@ Daftar tugas Instagram pada notifikasi terjadwal disusun dari dua sumber agar op
 
 Dengan aturan ini, konten hasil input manual yang valid tetap muncul pada `📋 Daftar Tugas` selama masih aktif di data harian client.
 
+Catatan mekanisme fetch manual post (Instagram): konten `manual_input` kini mengikuti standar harian yang sama seperti TikTok, yaitu hanya ditampilkan bila `created_at` berada pada tanggal berjalan zona `Asia/Jakarta`. Dengan demikian, tugas manual hari sebelumnya tidak ikut terbawa ke list pesan `📋 Daftar Tugas` hari ini.
+
 **Contoh pesan penambahan Instagram:**
 ```
 📸 *Tugas Instagram Baru - POLDA JATIM*
