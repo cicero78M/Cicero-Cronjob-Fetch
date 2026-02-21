@@ -49,6 +49,8 @@ export async function getShortcodesTodayByClient(identifier) {
     timeZone: 'Asia/Jakarta'
   });
 
+  const jakartaDateExpr = "(((p.created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Jakarta')::date)";
+
   const typeRes = await query(
     'SELECT client_type FROM clients WHERE LOWER(client_id) = LOWER($1)',
     [identifier]
@@ -66,16 +68,25 @@ export async function getShortcodesTodayByClient(identifier) {
 
   if (useRoleFilter) {
     sql =
-      `SELECT p.shortcode FROM insta_post p\n` +
-      `JOIN insta_post_roles pr ON pr.shortcode = p.shortcode\n` +
-      `WHERE LOWER(pr.role_name) = LOWER($1)\n` +
-      `  AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date\n` +
-      `ORDER BY p.created_at ASC, p.shortcode ASC`;
+      `SELECT shortcode FROM (\n` +
+      `  SELECT p.shortcode, p.created_at\n` +
+      `  FROM insta_post p\n` +
+      `  JOIN insta_post_roles pr ON pr.shortcode = p.shortcode\n` +
+      `  WHERE LOWER(pr.role_name) = LOWER($1)\n` +
+      `    AND ${jakartaDateExpr} = $2::date\n` +
+      `  UNION\n` +
+      `  SELECT p.shortcode, p.created_at\n` +
+      `  FROM insta_post p\n` +
+      `  WHERE LOWER(p.client_id) = LOWER($1)\n` +
+      `    AND ${jakartaDateExpr} = $2::date\n` +
+      `    AND REPLACE(REPLACE(COALESCE(LOWER(TRIM(p.source_type)), 'cron_fetch'), ' ', '_'), '-', '_') IN ('manual_input', 'manual_fetch')\n` +
+      `) merged\n` +
+      `ORDER BY created_at ASC, shortcode ASC`;
     params = [identifier, today];
   } else {
     sql =
       `SELECT shortcode FROM insta_post\n` +
-      `WHERE LOWER(client_id) = LOWER($1) AND (created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date\n` +
+      `WHERE LOWER(client_id) = LOWER($1) AND (((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Jakarta')::date) = $2::date\n` +
       `ORDER BY created_at ASC, shortcode ASC`;
     params = [identifier, today];
   }
@@ -85,7 +96,7 @@ export async function getShortcodesTodayByClient(identifier) {
   if (useRoleFilter && clientType === 'direktorat' && rows.length === 0) {
     const fallbackQuery =
       `SELECT shortcode FROM insta_post\n` +
-      `WHERE LOWER(client_id) = LOWER($1) AND (created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date\n` +
+      `WHERE LOWER(client_id) = LOWER($1) AND (((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Jakarta')::date) = $2::date\n` +
       `ORDER BY created_at ASC, shortcode ASC`;
     rows = (await query(fallbackQuery, [identifier, today])).rows;
   }
