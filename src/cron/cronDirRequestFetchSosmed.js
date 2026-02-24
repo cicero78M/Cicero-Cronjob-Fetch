@@ -30,9 +30,17 @@ let isFetchInFlight = false;
 
 const JAKARTA_TIMEZONE = "Asia/Jakarta";
 const HOURLY_SLOT_ANCHOR_MINUTE = 5;
+const DITINTELKAM_CLIENT_ID = "DITINTELKAM";
 
 function normalizeClientId(clientId) {
   return String(clientId || "").trim().toUpperCase();
+}
+
+function toNormalizedClientIdSet(clientIds = []) {
+  const normalized = clientIds
+    .map((clientId) => normalizeClientId(clientId))
+    .filter(Boolean);
+  return new Set(normalized);
 }
 
 function toIsoOrNull(value) {
@@ -236,6 +244,7 @@ function shouldSendHourlyNotifications() {
 export async function processClient(client, options = {}) {
   const {
     forceEngagementOnly,
+    forcePostFetch,
     schedulerStateByClient,
     stateStorageHealthy,
   } = options;
@@ -243,7 +252,7 @@ export async function processClient(client, options = {}) {
   const clientId = normalizeClientId(client?.client_id);
   const hasInstagram = client?.client_insta_status !== false;
   const hasTiktok = client?.client_tiktok_status !== false;
-  const skipPostFetch = forceEngagementOnly || !shouldFetchPostsForClient(client);
+  const skipPostFetch = forceEngagementOnly || (!forcePostFetch && !shouldFetchPostsForClient(client));
   const schedulerState = schedulerStateByClient.get(clientId) || buildFallbackState(clientId);
   const currentSlotKey = buildJakartaHourlySlotKey(new Date());
 
@@ -416,9 +425,13 @@ export async function processClient(client, options = {}) {
 export async function runCron(options = {}) {
   const {
     forceEngagementOnly = false,
+    forcePostFetch = false,
     clientConcurrency = DEFAULT_CLIENT_CONCURRENCY,
     maxRunDurationMs = DEFAULT_MAX_RUN_DURATION_MS,
+    targetClientIds = [],
   } = options;
+  const targetClientIdSet = toNormalizedClientIdSet(targetClientIds);
+  const hasTargetClientFilter = targetClientIdSet.size > 0;
   const runStartedAt = Date.now();
   const distributedLock = await acquireDistributedLock({
     key: DISTRIBUTED_LOCK_KEY,
@@ -457,15 +470,20 @@ export async function runCron(options = {}) {
 
     logMessage("start", null, "cron", "start", null, null, "", {
       forceEngagementOnly,
+      forcePostFetch,
       clientConcurrency,
       maxRunDurationMs,
+      targetClientIds: hasTargetClientFilter ? [...targetClientIdSet] : null,
       timeBasedMessage
     });
     await sendTelegramLog("INFO", `🚀 Cron job started: ${LOG_TAG} - ${timeBasedMessage}${forceEngagementOnly ? " (forced engagement only)" : ""}`);
 
     const activeClients = await findAllActiveClientsWithSosmed();
+    const scopedClients = hasTargetClientFilter
+      ? activeClients.filter((client) => targetClientIdSet.has(normalizeClientId(client?.client_id)))
+      : activeClients;
 
-    if (activeClients.length === 0) {
+    if (scopedClients.length === 0) {
       logMessage("init", null, "loadClients", "empty", null, null, "No active clients with Instagram or TikTok");
       await sendTelegramLog("INFO", `${LOG_TAG}: No active clients to process`);
       return;
@@ -473,7 +491,7 @@ export async function runCron(options = {}) {
 
     let schedulerStateByClient = new Map();
     let stateStorageHealthy = true;
-    const activeClientIds = activeClients.map((client) => normalizeClientId(client.client_id)).filter(Boolean);
+    const activeClientIds = scopedClients.map((client) => normalizeClientId(client.client_id)).filter(Boolean);
 
     try {
       schedulerStateByClient = await getSchedulerStateMapByClientIds(activeClientIds);
@@ -487,14 +505,14 @@ export async function runCron(options = {}) {
       await sendTelegramError(`${LOG_TAG}: Failed loading scheduler state`, storageErr);
     }
 
-    logMessage("init", null, "loadClients", "loaded", null, null, `Processing ${activeClients.length} clients`);
+    logMessage("init", null, "loadClients", "loaded", null, null, `Processing ${scopedClients.length} clients`);
 
     const limit = pLimit(clientConcurrency);
     const clientTasks = [];
     let processedCount = 0;
     let skippedDueToDeadline = 0;
 
-    for (const client of activeClients) {
+    for (const client of scopedClients) {
       const elapsedMs = Date.now() - runStartedAt;
       const remainingMs = maxRunDurationMs - elapsedMs;
 
@@ -507,6 +525,7 @@ export async function runCron(options = {}) {
         try {
           const result = await processClient(client, {
             forceEngagementOnly,
+            forcePostFetch,
             schedulerStateByClient,
             stateStorageHealthy,
           });
@@ -534,7 +553,7 @@ export async function runCron(options = {}) {
         });
     }
 
-    const completionMessage = `✅ ${LOG_TAG} completed. processed_count=${processedCount}, skipped_due_to_deadline=${skippedDueToDeadline}, total_clients=${activeClients.length}.`;
+    const completionMessage = `✅ ${LOG_TAG} completed. processed_count=${processedCount}, skipped_due_to_deadline=${skippedDueToDeadline}, total_clients=${scopedClients.length}.`;
     logMessage("end", null, "cron", "completed", null, null, completionMessage);
     await sendTelegramLog("INFO", completionMessage);
 
@@ -579,6 +598,8 @@ const UNIFIED_FETCH_SCHEDULES = [
   "58 20-21 * * *",
 ];
 
+const DITINTELKAM_15_MINUTE_SCHEDULE = "*/15 * * * *";
+
 const CRON_OPTIONS = { timezone: "Asia/Jakarta" };
 
 // Schedule unified fetch jobs (06:00-21:30 + final 20:58/21:58)
@@ -590,3 +611,13 @@ UNIFIED_FETCH_SCHEDULES.forEach((schedule, index) => {
     CRON_OPTIONS
   );
 });
+
+scheduleCronJob(
+  JOB_KEY + ":ditintelkam-15-minute",
+  DITINTELKAM_15_MINUTE_SCHEDULE,
+  () => runCron({
+    targetClientIds: [DITINTELKAM_CLIENT_ID],
+    forcePostFetch: true,
+  }),
+  CRON_OPTIONS
+);
