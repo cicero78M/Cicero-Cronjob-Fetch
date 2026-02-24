@@ -598,7 +598,10 @@ const UNIFIED_FETCH_SCHEDULES = [
   "58 20-21 * * *",
 ];
 
-const DITINTELKAM_15_MINUTE_SCHEDULE = "*/15 * * * *";
+const DITINTELKAM_15_MINUTE_SCHEDULES = [
+  "*/15 6-21 * * *",
+  "0 22 * * *",
+];
 
 const CRON_OPTIONS = { timezone: "Asia/Jakarta" };
 
@@ -612,12 +615,14 @@ UNIFIED_FETCH_SCHEDULES.forEach((schedule, index) => {
   );
 });
 
-scheduleCronJob(
-  JOB_KEY + ":ditintelkam-15-minute",
-  DITINTELKAM_15_MINUTE_SCHEDULE,
-  () => runCron({
-    targetClientIds: [DITINTELKAM_CLIENT_ID],
-    forcePostFetch: true,
-  }),
-  CRON_OPTIONS
-);
+DITINTELKAM_15_MINUTE_SCHEDULES.forEach((schedule, index) => {
+  scheduleCronJob(
+    JOB_KEY + `:ditintelkam-15-minute-${index}`,
+    schedule,
+    () => runCron({
+      targetClientIds: [DITINTELKAM_CLIENT_ID],
+      forcePostFetch: true,
+    }),
+    CRON_OPTIONS
+  );
+});
