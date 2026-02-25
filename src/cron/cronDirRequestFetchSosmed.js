@@ -245,19 +245,8 @@ function isWithinPostWindow(profile, hour, minute) {
   return true;
 }
 
-function shouldProcessClientAtJakartaParts(client, jakartaParts) {
-  const { hour, minute } = jakartaParts || {};
-  const scheduleProfile = resolveClientFetchSegment(client);
-
-  if (isWithinPostWindow(scheduleProfile, hour, minute)) {
-    return true;
-  }
-
-  return scheduleProfile.include2200EngagementSlot && hour === 22 && minute === 0;
-}
-
-function shouldFetchEngagementForClientAtJakartaParts(client, jakartaParts) {
-  return shouldProcessClientAtJakartaParts(client, jakartaParts);
+function shouldFetchEngagementForClientAtJakartaParts() {
+  return true;
 }
 
 /**
@@ -536,7 +525,7 @@ export async function runCron(options = {}) {
     // Determine if we should fetch posts based on time
     const timeBasedMessage = forceEngagementOnly
       ? "engagement only period (forced by options)"
-      : "post fetch/engagement period (global 07:00-22:00 schedule; runtime per-client profile gating)";
+      : "post fetch/engagement period (global 07:00-22:00 schedule; engagement always runs while posts follow per-client profile gating)";
 
     logMessage("start", null, "cron", "start", null, null, "", {
       forceEngagementOnly,

@@ -149,6 +149,36 @@ test('post-fetch slot executes Instagram post, TikTok post, Instagram likes, and
   jest.useRealTimers();
 });
 
+test('engagement still runs outside post-fetch slot', async () => {
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date('2026-01-01T15:30:00.000Z')); // 22:30 WIB (outside post slot)
+
+  const schedulerStateByClient = new Map([
+    ['ORG1', { clientId: 'ORG1', lastIgCount: 0, lastTiktokCount: 0, lastNotifiedAt: null, lastNotifiedSlot: null }],
+  ]);
+
+  await processClient(
+    {
+      client_id: 'org1',
+      client_type: 'org',
+      client_insta_status: true,
+      client_tiktok_status: true,
+    },
+    {
+      schedulerStateByClient,
+      stateStorageHealthy: true,
+    }
+  );
+
+  expect(mockFetchInsta).not.toHaveBeenCalled();
+  expect(mockFetchTiktok).not.toHaveBeenCalled();
+  expect(mockFetchLikes).toHaveBeenCalledTimes(1);
+  expect(mockFetchKomentarTiktokBatch).toHaveBeenCalledTimes(1);
+
+  jest.useRealTimers();
+});
+
+
 
 describe('shouldFetchPostsForClient', () => {
   test('DITBINMAS follows 11:00-20:00 WIB post fetch window', () => {
