@@ -120,6 +120,35 @@ test('does not refresh TikTok comments when client_tiktok_status is false', asyn
   jest.useRealTimers();
 });
 
+test('post-fetch slot executes Instagram post, TikTok post, Instagram likes, and TikTok comments', async () => {
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date('2026-01-01T03:00:00.000Z')); // 10:00 WIB
+
+  const schedulerStateByClient = new Map([
+    ['BIDHUMAS', { clientId: 'BIDHUMAS', lastIgCount: 0, lastTiktokCount: 0, lastNotifiedAt: null, lastNotifiedSlot: null }],
+  ]);
+
+  await processClient(
+    {
+      client_id: 'bidhumas',
+      client_type: 'direktorat',
+      client_insta_status: true,
+      client_tiktok_status: true,
+    },
+    {
+      schedulerStateByClient,
+      stateStorageHealthy: true,
+    }
+  );
+
+  expect(mockFetchInsta).toHaveBeenCalledTimes(1);
+  expect(mockFetchTiktok).toHaveBeenCalledTimes(1);
+  expect(mockFetchLikes).toHaveBeenCalledTimes(1);
+  expect(mockFetchKomentarTiktokBatch).toHaveBeenCalledTimes(1);
+
+  jest.useRealTimers();
+});
+
 
 describe('shouldFetchPostsForClient', () => {
   test('DITBINMAS follows 11:00-20:00 WIB post fetch window', () => {

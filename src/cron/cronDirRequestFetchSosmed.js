@@ -256,6 +256,10 @@ function shouldProcessClientAtJakartaParts(client, jakartaParts) {
   return scheduleProfile.include2200EngagementSlot && hour === 22 && minute === 0;
 }
 
+function shouldFetchEngagementForClientAtJakartaParts(client, jakartaParts) {
+  return shouldProcessClientAtJakartaParts(client, jakartaParts);
+}
+
 /**
  * Pure slot validator for Jakarta hour+minute.
  * Uses per-client schedule profiles.
@@ -300,8 +304,11 @@ export async function processClient(client, options = {}) {
   const clientId = normalizeClientId(client?.client_id);
   const hasInstagram = client?.client_insta_status !== false;
   const hasTiktok = client?.client_tiktok_status !== false;
-  const shouldRunForCurrentSlot = shouldProcessClientAtJakartaParts(client, getJakartaTimeParts(new Date()));
-  if (!forcePostFetch && !forceEngagementOnly && !shouldRunForCurrentSlot) {
+  const jakartaParts = getJakartaTimeParts(new Date());
+  const shouldFetchPostsNow = forcePostFetch || (!forceEngagementOnly && shouldFetchPostsForClientAtJakartaParts(client, jakartaParts));
+  const shouldFetchEngagementNow = forcePostFetch || shouldFetchEngagementForClientAtJakartaParts(client, jakartaParts);
+
+  if (!shouldFetchPostsNow && !shouldFetchEngagementNow) {
     logMessage("clientSchedule", clientId, "processClient", "skipped", null, null,
       "outside client processing slot");
     return {
@@ -311,7 +318,7 @@ export async function processClient(client, options = {}) {
     };
   }
 
-  const skipPostFetch = forceEngagementOnly || (!forcePostFetch && !shouldFetchPostsForClient(client));
+  const skipPostFetch = !shouldFetchPostsNow;
   const schedulerState = schedulerStateByClient.get(clientId) || buildFallbackState(clientId);
   const currentSlotKey = buildJakartaHourlySlotKey(new Date());
 
@@ -345,23 +352,27 @@ export async function processClient(client, options = {}) {
   }
 
   // Fetch Instagram likes
-  if (hasInstagram) {
+  if (hasInstagram && shouldFetchEngagementNow) {
     logMessage("likesRefresh", clientId, "refreshLikes", "start", null, null);
     await handleFetchLikesInstagram(null, null, clientId);
     logMessage("likesRefresh", clientId, "refreshLikes", "completed", null, null);
   } else {
     logMessage("likesRefresh", clientId, "refreshLikes", "skipped", null, null,
-      "Instagram account inactive");
+      !hasInstagram
+        ? "Instagram account inactive"
+        : "outside engagement slot for client profile");
   }
 
   // Fetch TikTok comments
-  if (hasTiktok) {
+  if (hasTiktok && shouldFetchEngagementNow) {
     logMessage("commentRefresh", clientId, "refreshComments", "start", null, null);
     await handleFetchKomentarTiktokBatch(null, null, clientId);
     logMessage("commentRefresh", clientId, "refreshComments", "completed", null, null);
   } else {
     logMessage("commentRefresh", clientId, "refreshComments", "skipped", null, null,
-      "TikTok account inactive");
+      !hasTiktok
+        ? "TikTok account inactive"
+        : "outside engagement slot for client profile");
   }
 
   // Get updated counts after successful fetch+refresh
