@@ -29,8 +29,40 @@ const DEADLINE_INTAKE_BUFFER_MS = 20 * 1000;
 let isFetchInFlight = false;
 
 const JAKARTA_TIMEZONE = "Asia/Jakarta";
-const HOURLY_SLOT_ANCHOR_MINUTE = 5;
-const DITINTELKAM_CLIENT_ID = "DITINTELKAM";
+const HOURLY_SLOT_ANCHOR_MINUTE = 0;
+
+const CLIENT_SCHEDULE_PROFILES = Object.freeze({
+  ditbinmas: {
+    key: "ditbinmas",
+    startHour: 11,
+    endHour: 20,
+    include2200EngagementSlot: false,
+  },
+  bidhumas: {
+    key: "bidhumas",
+    startHour: 10,
+    endHour: 21,
+    include2200EngagementSlot: true,
+  },
+  ditintelkam: {
+    key: "ditintelkam",
+    startHour: 10,
+    endHour: 21,
+    include2200EngagementSlot: true,
+  },
+  org: {
+    key: "org",
+    startHour: 7,
+    endHour: 20,
+    include2200EngagementSlot: false,
+  },
+  default: {
+    key: "default",
+    startHour: 6,
+    endHour: 21,
+    include2200EngagementSlot: false,
+  },
+});
 
 function normalizeClientId(clientId) {
   return String(clientId || "").trim().toUpperCase();
@@ -97,9 +129,9 @@ function getJakartaTimeParts(date = new Date()) {
  * All runs in the same hour map to one key so hourly notification stays global.
  *
  * Example:
- * - 06:05 WIB => 2026-02-13-06@05
- * - 06:30 WIB => 2026-02-13-06@05
- * - 06:03 WIB => 2026-02-13-05@05 (previous hour slot)
+ * - 06:00 WIB => 2026-02-13-06@00
+ * - 06:30 WIB => 2026-02-13-06@00
+ * - 06:03 WIB => 2026-02-13-06@00
  *
  * @param {Date} date
  * @returns {string}
@@ -175,50 +207,66 @@ function buildNextSchedulerState(schedulerState, countsAfter, notificationSent, 
   };
 }
 
-const CLIENT_FETCH_SEGMENTS = Object.freeze({
-  segmentA: "segmentA",
-  segmentB: "segmentB",
-});
+function isHalfHourlySlot(minute) {
+  return minute === 0 || minute === 30;
+}
 
 export function resolveClientFetchSegment(client) {
   const clientId = normalizeClientId(client?.client_id).toLowerCase();
   const clientType = String(client?.client_type || "").trim().toLowerCase();
 
-  if (clientType === "org" || clientId === "ditbinmas") {
-    return CLIENT_FETCH_SEGMENTS.segmentA;
+  if (clientId === "ditbinmas") {
+    return CLIENT_SCHEDULE_PROFILES.ditbinmas;
   }
 
-  if (clientType === "direktorat" && clientId !== "ditbinmas") {
-    return CLIENT_FETCH_SEGMENTS.segmentB;
+  if (clientId === "bidhumas") {
+    return CLIENT_SCHEDULE_PROFILES.bidhumas;
   }
 
-  return CLIENT_FETCH_SEGMENTS.segmentA;
+  if (clientId === "ditintelkam") {
+    return CLIENT_SCHEDULE_PROFILES.ditintelkam;
+  }
+
+  if (clientType === "org") {
+    return CLIENT_SCHEDULE_PROFILES.org;
+  }
+
+  return CLIENT_SCHEDULE_PROFILES.default;
+}
+
+function isWithinPostWindow(profile, hour, minute) {
+  if (!isHalfHourlySlot(minute)) return false;
+  if (hour < profile.startHour || hour > profile.endHour) return false;
+
+  if (hour === profile.endHour) {
+    return minute === 0;
+  }
+
+  return true;
+}
+
+function shouldProcessClientAtJakartaParts(client, jakartaParts) {
+  const { hour, minute } = jakartaParts || {};
+  const scheduleProfile = resolveClientFetchSegment(client);
+
+  if (isWithinPostWindow(scheduleProfile, hour, minute)) {
+    return true;
+  }
+
+  return scheduleProfile.include2200EngagementSlot && hour === 22 && minute === 0;
 }
 
 /**
  * Pure slot validator for Jakarta hour+minute.
- * Segment A: 06:00-20:30 plus final 20:58 slot.
- * Segment B: 06:00-21:30 plus final 21:58 slot.
+ * Uses per-client schedule profiles.
  * @param {object} client
  * @param {{hour:number, minute:number}} jakartaParts
  * @returns {boolean}
  */
 export function shouldFetchPostsForClientAtJakartaParts(client, jakartaParts) {
   const { hour, minute } = jakartaParts || {};
-  const isExactHalfHourSlot = minute === 0 || minute === 30;
-  const clientSegment = resolveClientFetchSegment(client);
-
-  if (hour < 6) return false;
-
-  if (clientSegment === CLIENT_FETCH_SEGMENTS.segmentA) {
-    if (hour <= 19 && isExactHalfHourSlot) return true;
-    if (hour === 20 && (isExactHalfHourSlot || minute === 58)) return true;
-    return false;
-  }
-
-  if (hour <= 20 && isExactHalfHourSlot) return true;
-  if (hour === 21 && (isExactHalfHourSlot || minute === 58)) return true;
-  return false;
+  const clientSchedule = resolveClientFetchSegment(client);
+  return isWithinPostWindow(clientSchedule, hour, minute);
 }
 
 /**
@@ -252,6 +300,17 @@ export async function processClient(client, options = {}) {
   const clientId = normalizeClientId(client?.client_id);
   const hasInstagram = client?.client_insta_status !== false;
   const hasTiktok = client?.client_tiktok_status !== false;
+  const shouldRunForCurrentSlot = shouldProcessClientAtJakartaParts(client, getJakartaTimeParts(new Date()));
+  if (!forcePostFetch && !forceEngagementOnly && !shouldRunForCurrentSlot) {
+    logMessage("clientSchedule", clientId, "processClient", "skipped", null, null,
+      "outside client processing slot");
+    return {
+      clientId,
+      skipped: true,
+      reason: "outside client processing slot",
+    };
+  }
+
   const skipPostFetch = forceEngagementOnly || (!forcePostFetch && !shouldFetchPostsForClient(client));
   const schedulerState = schedulerStateByClient.get(clientId) || buildFallbackState(clientId);
   const currentSlotKey = buildJakartaHourlySlotKey(new Date());
@@ -466,7 +525,7 @@ export async function runCron(options = {}) {
     // Determine if we should fetch posts based on time
     const timeBasedMessage = forceEngagementOnly
       ? "engagement only period (forced by options)"
-      : "post fetch/engagement period (global 06:00-21:30 + final 20:58/21:58 slots; runtime per-client segment gating)";
+      : "post fetch/engagement period (global 07:00-22:00 schedule; runtime per-client profile gating)";
 
     logMessage("start", null, "cron", "start", null, null, "", {
       forceEngagementOnly,
@@ -591,38 +650,21 @@ export async function runCron(options = {}) {
 
 export const JOB_KEY = "./src/cron/cronDirRequestFetchSosmed.js";
 
-// Unified run every 30 minutes from 06:00-21:30 WIB + final :58 slot for 20:58 and 21:58.
-// Post-fetch eligibility is decided per client inside shouldFetchPostsForClient().
+// Unified run every 30 minutes from 07:00-22:00 WIB.
+// Runtime per-client profile decides whether each client fetches posts and/or engagement.
 const UNIFIED_FETCH_SCHEDULES = [
-  "0,30 6-21 * * *",
-  "58 20-21 * * *",
-];
-
-const DITINTELKAM_15_MINUTE_SCHEDULES = [
-  "*/15 6-21 * * *",
+  "0,30 7-21 * * *",
   "0 22 * * *",
 ];
 
 const CRON_OPTIONS = { timezone: "Asia/Jakarta" };
 
-// Schedule unified fetch jobs (06:00-21:30 + final 20:58/21:58)
+// Schedule unified fetch jobs (07:00-22:00)
 UNIFIED_FETCH_SCHEDULES.forEach((schedule, index) => {
   scheduleCronJob(
     JOB_KEY + `:unified-fetch-${index}`,
     schedule,
     runCron,
-    CRON_OPTIONS
-  );
-});
-
-DITINTELKAM_15_MINUTE_SCHEDULES.forEach((schedule, index) => {
-  scheduleCronJob(
-    JOB_KEY + `:ditintelkam-15-minute-${index}`,
-    schedule,
-    () => runCron({
-      targetClientIds: [DITINTELKAM_CLIENT_ID],
-      forcePostFetch: true,
-    }),
     CRON_OPTIONS
   );
 });
