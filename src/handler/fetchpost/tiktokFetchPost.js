@@ -91,8 +91,9 @@ function parseCreatedAt(value) {
 }
 
 /**
- * Cek apakah sekarang (Asia/Jakarta) berada di antara 11:00 sampai 17:15.
- * Dipakai untuk membatasi fallback RapidAPI via username agar hanya berjalan pada jam sibuk.
+ * Cek apakah sekarang (Asia/Jakarta) berada di antara 11:00 sampai 22:00.
+ * Dipakai untuk membatasi fallback RapidAPI via username agar tetap aktif
+ * sepanjang slot cron fetch sosial media (termasuk setelah 17:00 WIB).
  */
 function isWithinJakartaFallbackWindow() {
   const nowJakarta = new Date(
@@ -101,7 +102,7 @@ function isWithinJakartaFallbackWindow() {
   const start = new Date(nowJakarta);
   start.setHours(11, 0, 0, 0);
   const end = new Date(nowJakarta);
-  end.setHours(17, 15, 0, 0);
+  end.setHours(22, 0, 0, 0);
   return nowJakarta >= start && nowJakarta <= end;
 }
 
@@ -384,7 +385,7 @@ export async function fetchAndStoreTiktokContent(
       if (!isWithinJakartaFallbackWindow()) {
         sendDebug({
           tag: "TIKTOK FETCH",
-          msg: `${reason}. Lewati fallback RapidAPI karena di luar jam 11:00-17:15 WIB`,
+          msg: `${reason}. Lewati fallback RapidAPI karena di luar jam 11:00-22:00 WIB`,
           client_id: client.id,
         });
         return false;
