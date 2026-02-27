@@ -149,9 +149,9 @@ test('post-fetch slot executes Instagram post, TikTok post, Instagram likes, and
   jest.useRealTimers();
 });
 
-test('engagement still runs outside post-fetch slot', async () => {
+test('post and engagement both run on any execution hour', async () => {
   jest.useFakeTimers();
-  jest.setSystemTime(new Date('2026-01-01T15:30:00.000Z')); // 22:30 WIB (outside post slot)
+  jest.setSystemTime(new Date('2026-01-01T15:30:00.000Z')); // 22:30 WIB
 
   const schedulerStateByClient = new Map([
     ['ORG1', { clientId: 'ORG1', lastIgCount: 0, lastTiktokCount: 0, lastNotifiedAt: null, lastNotifiedSlot: null }],
@@ -170,8 +170,8 @@ test('engagement still runs outside post-fetch slot', async () => {
     }
   );
 
-  expect(mockFetchInsta).not.toHaveBeenCalled();
-  expect(mockFetchTiktok).not.toHaveBeenCalled();
+  expect(mockFetchInsta).toHaveBeenCalledTimes(1);
+  expect(mockFetchTiktok).toHaveBeenCalledTimes(1);
   expect(mockFetchLikes).toHaveBeenCalledTimes(1);
   expect(mockFetchKomentarTiktokBatch).toHaveBeenCalledTimes(1);
 
@@ -181,32 +181,23 @@ test('engagement still runs outside post-fetch slot', async () => {
 
 
 describe('shouldFetchPostsForClient', () => {
-  test('DITBINMAS follows 11:00-20:00 WIB post fetch window', () => {
+  test('returns true for all client types across all hours', () => {
     const orgClient = { client_id: 'POLRESTA', client_type: 'org' };
     const ditbinmasClient = { client_id: 'DITBINMAS', client_type: 'direktorat' };
-
-    expect(shouldFetchPostsForClient(ditbinmasClient, new Date('2026-01-01T03:30:00.000Z'))).toBe(false); // 10:30 WIB
-    expect(shouldFetchPostsForClient(ditbinmasClient, new Date('2026-01-01T04:00:00.000Z'))).toBe(true); // 11:00 WIB
-    expect(shouldFetchPostsForClient(ditbinmasClient, new Date('2026-01-01T13:00:00.000Z'))).toBe(true); // 20:00 WIB
-    expect(shouldFetchPostsForClient(ditbinmasClient, new Date('2026-01-01T13:30:00.000Z'))).toBe(false); // 20:30 WIB
-
-    expect(shouldFetchPostsForClient(orgClient, new Date('2026-01-01T00:00:00.000Z'))).toBe(true); // 07:00 WIB
-    expect(shouldFetchPostsForClient(orgClient, new Date('2026-01-01T13:00:00.000Z'))).toBe(true); // 20:00 WIB
-    expect(shouldFetchPostsForClient(orgClient, new Date('2026-01-01T13:30:00.000Z'))).toBe(false); // 20:30 WIB
-  });
-
-  test('BIDHUMAS and DITINTELKAM follow 10:00-21:00 WIB post fetch window', () => {
     const bidhumasClient = { client_id: 'BIDHUMAS', client_type: 'direktorat' };
     const ditintelkamClient = { client_id: 'DITINTELKAM', client_type: 'direktorat' };
 
-    expect(shouldFetchPostsForClient(bidhumasClient, new Date('2026-01-01T02:30:00.000Z'))).toBe(false); // 09:30 WIB
-    expect(shouldFetchPostsForClient(bidhumasClient, new Date('2026-01-01T03:00:00.000Z'))).toBe(true); // 10:00 WIB
-    expect(shouldFetchPostsForClient(bidhumasClient, new Date('2026-01-01T14:00:00.000Z'))).toBe(true); // 21:00 WIB
-    expect(shouldFetchPostsForClient(bidhumasClient, new Date('2026-01-01T14:30:00.000Z'))).toBe(false); // 21:30 WIB
+    expect(shouldFetchPostsForClient(ditbinmasClient, new Date('2026-01-01T03:30:00.000Z'))).toBe(true);
+    expect(shouldFetchPostsForClient(ditbinmasClient, new Date('2026-01-01T13:30:00.000Z'))).toBe(true);
 
-    expect(shouldFetchPostsForClient(ditintelkamClient, new Date('2026-01-01T03:00:00.000Z'))).toBe(true); // 10:00 WIB
-    expect(shouldFetchPostsForClient(ditintelkamClient, new Date('2026-01-01T14:00:00.000Z'))).toBe(true); // 21:00 WIB
-    expect(shouldFetchPostsForClient(ditintelkamClient, new Date('2026-01-01T14:30:00.000Z'))).toBe(false); // 21:30 WIB
+    expect(shouldFetchPostsForClient(orgClient, new Date('2026-01-01T00:00:00.000Z'))).toBe(true);
+    expect(shouldFetchPostsForClient(orgClient, new Date('2026-01-01T15:30:00.000Z'))).toBe(true);
+
+    expect(shouldFetchPostsForClient(bidhumasClient, new Date('2026-01-01T02:30:00.000Z'))).toBe(true);
+    expect(shouldFetchPostsForClient(bidhumasClient, new Date('2026-01-01T14:30:00.000Z'))).toBe(true);
+
+    expect(shouldFetchPostsForClient(ditintelkamClient, new Date('2026-01-01T03:00:00.000Z'))).toBe(true);
+    expect(shouldFetchPostsForClient(ditintelkamClient, new Date('2026-01-01T14:30:00.000Z'))).toBe(true);
   });
 });
 
@@ -218,7 +209,7 @@ describe('client slot segment helper', () => {
     expect(resolveClientFetchSegment({ client_id: 'DITINTELKAM', client_type: 'direktorat' }).key).toBe('ditintelkam');
   });
 
-  test('shouldFetchPostsForClientAtJakartaParts validates boundary slots', () => {
+  test('shouldFetchPostsForClientAtJakartaParts always returns true', () => {
     const ditbinmasClient = { client_id: 'DITBINMAS', client_type: 'direktorat' };
     const bidhumasClient = { client_id: 'BIDHUMAS', client_type: 'direktorat' };
     const orgClient = { client_id: 'POLRESTA', client_type: 'org' };
@@ -226,14 +217,14 @@ describe('client slot segment helper', () => {
     expect(shouldFetchPostsForClientAtJakartaParts(ditbinmasClient, { hour: 11, minute: 0 })).toBe(true);
     expect(shouldFetchPostsForClientAtJakartaParts(ditbinmasClient, { hour: 11, minute: 30 })).toBe(true);
     expect(shouldFetchPostsForClientAtJakartaParts(ditbinmasClient, { hour: 20, minute: 0 })).toBe(true);
-    expect(shouldFetchPostsForClientAtJakartaParts(ditbinmasClient, { hour: 20, minute: 30 })).toBe(false);
+    expect(shouldFetchPostsForClientAtJakartaParts(ditbinmasClient, { hour: 20, minute: 30 })).toBe(true);
 
     expect(shouldFetchPostsForClientAtJakartaParts(bidhumasClient, { hour: 10, minute: 0 })).toBe(true);
     expect(shouldFetchPostsForClientAtJakartaParts(bidhumasClient, { hour: 21, minute: 0 })).toBe(true);
-    expect(shouldFetchPostsForClientAtJakartaParts(bidhumasClient, { hour: 21, minute: 30 })).toBe(false);
+    expect(shouldFetchPostsForClientAtJakartaParts(bidhumasClient, { hour: 21, minute: 30 })).toBe(true);
 
     expect(shouldFetchPostsForClientAtJakartaParts(orgClient, { hour: 7, minute: 0 })).toBe(true);
     expect(shouldFetchPostsForClientAtJakartaParts(orgClient, { hour: 20, minute: 0 })).toBe(true);
-    expect(shouldFetchPostsForClientAtJakartaParts(orgClient, { hour: 20, minute: 30 })).toBe(false);
+    expect(shouldFetchPostsForClientAtJakartaParts(orgClient, { hour: 20, minute: 30 })).toBe(true);
   });
 });

@@ -281,6 +281,82 @@ describe('fetchAndStoreTiktokContent fallback handling', () => {
     expect(upsertPayload.like_count).toBe(7);
   });
 
+
+
+  test('fallback username tetap berjalan setelah jam 17:00 WIB selama masih dalam slot cron', async () => {
+    jest.useFakeTimers();
+    const systemTime = new Date('2024-03-10T11:30:00Z'); // 18:30 WIB
+    jest.setSystemTime(systemTime);
+
+    const mockQuery = jest.fn().mockResolvedValue({ rows: [] });
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'CLIENT_AFTER_1700',
+            client_tiktok: '@clientafter1700',
+            tiktok_secuid: 'SEC_AFTER_1700',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ client_id: 'CLIENT_AFTER_1700', client_tiktok: '@clientafter1700' }],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            video_id: 'after-1700-video',
+            client_id: 'CLIENT_AFTER_1700',
+            created_at: new Date(systemTime),
+          },
+        ],
+      });
+
+    const mockUpsert = jest.fn().mockResolvedValue();
+    const mockSendDebug = jest.fn();
+    const mockFetchBySecUid = jest.fn().mockResolvedValue([]);
+    const mockFetchByUsername = jest.fn().mockResolvedValue([
+      {
+        id: 'after-1700-video',
+        create_time: Math.floor(systemTime.getTime() / 1000),
+        stats: { diggCount: 9, commentCount: 5 },
+      },
+    ]);
+
+    jest.unstable_mockModule('../src/db/index.js', () => ({
+      query: mockQuery,
+    }));
+    jest.unstable_mockModule('../src/model/clientModel.js', () => ({
+      update: jest.fn(),
+    }));
+    jest.unstable_mockModule('../src/model/tiktokPostModel.js', () => ({
+      upsertTiktokPosts: mockUpsert,
+    }));
+    jest.unstable_mockModule('../src/middleware/debugHandler.js', () => ({
+      sendDebug: mockSendDebug,
+    }));
+    jest.unstable_mockModule('../src/service/tiktokApi.js', () => ({
+      fetchTiktokPosts: mockFetchByUsername,
+      fetchTiktokPostsBySecUid: mockFetchBySecUid,
+      fetchTiktokInfo: jest.fn(),
+      fetchTiktokPostDetail: jest.fn(),
+    }));
+
+    const { fetchAndStoreTiktokContent } = await import(
+      '../src/handler/fetchpost/tiktokFetchPost.js'
+    );
+
+    await fetchAndStoreTiktokContent('CLIENT_AFTER_1700');
+
+    expect(mockFetchBySecUid).toHaveBeenCalledTimes(1);
+    expect(mockFetchByUsername).toHaveBeenCalledTimes(1);
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    const upsertPayload = mockUpsert.mock.calls[0][1][0];
+    expect(upsertPayload.video_id).toBe('after-1700-video');
+    expect(upsertPayload.like_count).toBe(9);
+    expect(upsertPayload.comment_count).toBe(5);
+  });
   test('falls back to username when primary posts do not include today', async () => {
     jest.useFakeTimers();
     const systemTime = new Date('2024-03-10T04:30:00Z'); // 11:30 WIB
