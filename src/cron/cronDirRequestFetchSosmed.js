@@ -207,10 +207,6 @@ function buildNextSchedulerState(schedulerState, countsAfter, notificationSent, 
   };
 }
 
-function isHalfHourlySlot(minute) {
-  return minute === 0 || minute === 30;
-}
-
 export function resolveClientFetchSegment(client) {
   const clientId = normalizeClientId(client?.client_id).toLowerCase();
   const clientType = String(client?.client_type || "").trim().toLowerCase();
@@ -234,17 +230,6 @@ export function resolveClientFetchSegment(client) {
   return CLIENT_SCHEDULE_PROFILES.default;
 }
 
-function isWithinPostWindow(profile, hour, minute) {
-  if (!isHalfHourlySlot(minute)) return false;
-  if (hour < profile.startHour || hour > profile.endHour) return false;
-
-  if (hour === profile.endHour) {
-    return minute === 0;
-  }
-
-  return true;
-}
-
 function shouldFetchEngagementForClientAtJakartaParts() {
   return true;
 }
@@ -257,9 +242,9 @@ function shouldFetchEngagementForClientAtJakartaParts() {
  * @returns {boolean}
  */
 export function shouldFetchPostsForClientAtJakartaParts(client, jakartaParts) {
-  const { hour, minute } = jakartaParts || {};
-  const clientSchedule = resolveClientFetchSegment(client);
-  return isWithinPostWindow(clientSchedule, hour, minute);
+  void client;
+  void jakartaParts;
+  return true;
 }
 
 /**
