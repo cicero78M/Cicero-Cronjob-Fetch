@@ -242,7 +242,12 @@ function shouldFetchEngagementForClientAtJakartaParts() {
  * @returns {boolean}
  */
 export function shouldFetchPostsForClientAtJakartaParts(client, jakartaParts) {
-  void client;
+  const normalizedClientId = normalizeClientId(client?.client_id);
+
+  if (normalizedClientId === "DITINTELKAM") {
+    return false;
+  }
+
   void jakartaParts;
   return true;
 }
@@ -293,6 +298,11 @@ export async function processClient(client, options = {}) {
   }
 
   const skipPostFetch = !shouldFetchPostsNow;
+  const skipPostFetchReason = forceEngagementOnly
+    ? "forceEngagementOnly=true"
+    : (clientId === "DITINTELKAM"
+      ? "DITINTELKAM post fetch disabled by client gating"
+      : "outside post-fetch slot for client segment");
   const schedulerState = schedulerStateByClient.get(clientId) || buildFallbackState(clientId);
   const currentSlotKey = buildJakartaHourlySlotKey(new Date());
 
@@ -310,7 +320,7 @@ export async function processClient(client, options = {}) {
     logMessage("instagramFetch", clientId, "fetchInstagram", "skipped", null, null,
       !hasInstagram
         ? "Instagram account inactive"
-        : (forceEngagementOnly ? "forceEngagementOnly=true" : "outside post-fetch slot for client segment"));
+        : skipPostFetchReason);
   }
 
   // Fetch TikTok posts
@@ -322,7 +332,7 @@ export async function processClient(client, options = {}) {
     logMessage("tiktokFetch", clientId, "fetchTiktok", "skipped", null, null,
       !hasTiktok
         ? "TikTok account inactive"
-        : (forceEngagementOnly ? "forceEngagementOnly=true" : "outside post-fetch slot for client segment"));
+        : skipPostFetchReason);
   }
 
   // Fetch Instagram likes
