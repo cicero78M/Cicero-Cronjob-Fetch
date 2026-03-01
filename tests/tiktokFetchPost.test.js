@@ -104,7 +104,7 @@ describe('fetchAndStoreTiktokContent timezone handling', () => {
     );
     expect(selectTodayCall).toBeDefined();
     expect(selectTodayCall[0]).toContain(
-      "DATE((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Jakarta') = $1"
+      "(created_at AT TIME ZONE 'Asia/Jakarta')::date = $1::date"
     );
     expect(selectTodayCall[1]).toEqual([expectedJakartaDate, 'client_a']);
 
@@ -113,7 +113,7 @@ describe('fetchAndStoreTiktokContent timezone handling', () => {
     );
     expect(deleteCall).toBeDefined();
     expect(deleteCall[0]).toContain(
-      "DATE((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Jakarta') = $2"
+      "(created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date"
     );
     expect(deleteCall[1]).toEqual([
       ['old-1'],
@@ -126,7 +126,7 @@ describe('fetchAndStoreTiktokContent timezone handling', () => {
     );
     expect(finalSelectCall).toBeDefined();
     expect(finalSelectCall[0]).toContain(
-      "DATE((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Jakarta') = $1"
+      "(created_at AT TIME ZONE 'Asia/Jakarta')::date = $1::date"
     );
     expect(finalSelectCall[1]).toEqual([expectedJakartaDate, 'client_a']);
   });

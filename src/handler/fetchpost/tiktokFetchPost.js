@@ -185,7 +185,7 @@ async function getVideoIdsToday(clientId = null) {
     timeZone: "Asia/Jakarta",
   });
   let sql =
-    "SELECT video_id FROM tiktok_post WHERE DATE((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Jakarta') = $1";
+    "SELECT video_id FROM tiktok_post WHERE (created_at AT TIME ZONE 'Asia/Jakarta')::date = $1::date";
   const params = [todayJakarta];
   if (clientId) {
     sql += ` AND LOWER(TRIM(client_id)) = $2`;
@@ -201,7 +201,7 @@ async function deleteVideoIds(videoIdsToDelete, clientId = null) {
     timeZone: "Asia/Jakarta",
   });
   let sql =
-    "DELETE FROM tiktok_post WHERE video_id = ANY($1) AND DATE((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Jakarta') = $2";
+    "DELETE FROM tiktok_post WHERE video_id = ANY($1) AND (created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date";
   const params = [videoIdsToDelete, todayJakarta];
   if (clientId) {
     sql += ` AND LOWER(TRIM(client_id)) = $3`;
@@ -571,7 +571,7 @@ export async function fetchAndStoreTiktokContent(
     timeZone: "Asia/Jakarta",
   });
   let kontenHariIniSql =
-    "SELECT video_id, client_id, created_at FROM tiktok_post WHERE DATE((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Jakarta') = $1";
+    "SELECT video_id, client_id, created_at FROM tiktok_post WHERE (created_at AT TIME ZONE 'Asia/Jakarta')::date = $1::date";
   const kontenParams = [todayJakarta];
   if (targetClientId) {
     kontenHariIniSql += ` AND LOWER(TRIM(client_id)) = $2`;

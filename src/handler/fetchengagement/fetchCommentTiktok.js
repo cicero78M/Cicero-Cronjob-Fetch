@@ -111,7 +111,7 @@ export async function handleFetchKomentarTiktokBatch(waClient = null, chatId = n
     const todayJakarta = resolveJakartaDateString();
     const normalizedId = normalizeClientId(client_id);
     const { rows } = await query(
-      `SELECT video_id FROM tiktok_post WHERE LOWER(TRIM(client_id)) = $1 AND DATE((created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Jakarta') = $2`,
+      `SELECT video_id FROM tiktok_post WHERE LOWER(TRIM(client_id)) = $1 AND (created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date`,
       [normalizedId, todayJakarta]
     );
     const videoIds = rows.map((r) => r.video_id);
