@@ -254,6 +254,8 @@ export async function getRekapLikesByClient(
 ) {
   const roleLower = role ? role.toLowerCase() : null;
   const {
+    scope = null,
+    authenticatedClientId = null,
     postClientId: postClientIdOverride = null,
     userClientId: userClientIdOverride = null,
     userRoleFilter = null,
@@ -263,6 +265,15 @@ export async function getRekapLikesByClient(
     officialAccountsOnly = false,
     regionalId = null,
   } = options;
+  const normalizedScope = scope
+    ? String(scope).trim().toLowerCase()
+    : null;
+  const normalizedAuthenticatedClientId = authenticatedClientId
+    ? String(authenticatedClientId).trim()
+    : null;
+  const isDirectorateRole = ['ditbinmas', 'ditlantas', 'bidhumas', 'ditsamapta'].includes(roleLower);
+  const shouldUseAuthenticatedOrgClient =
+    normalizedScope === 'org' && isDirectorateRole && Boolean(normalizedAuthenticatedClientId);
   const normalizedRegionalId = regionalId
     ? String(regionalId).trim().toUpperCase()
     : null;
@@ -284,7 +295,10 @@ export async function getRekapLikesByClient(
   const resolvedPostClientId =
     postClientIdOverride ?? (roleLower === 'ditbinmas' ? null : client_id);
   const resolvedUserClientId =
-    userClientIdOverride ?? (roleLower === 'ditbinmas' ? null : client_id);
+    userClientIdOverride ??
+    (shouldUseAuthenticatedOrgClient
+      ? normalizedAuthenticatedClientId
+      : (roleLower === 'ditbinmas' ? null : client_id));
   const resolvedUserRole =
     userRoleFilter ?? (roleLower === 'ditbinmas' ? roleLower : null);
 
