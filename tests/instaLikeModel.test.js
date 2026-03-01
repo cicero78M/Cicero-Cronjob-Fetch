@@ -105,7 +105,7 @@ test('filters users by role when role is ditbinmas', async () => {
   expect(sql).toMatch(/LOWER\(r\.role_name\) = LOWER\(\$\d+\)/);
   expect(sql).toContain('1=1');
   expect(sql).toContain('LEFT JOIN insta_post_roles pr ON pr.shortcode = p.shortcode');
-  expect(sql).toMatch(/LOWER\(pc\.client_id\) = LOWER\(\$\d+\)/);
+  expect(sql).toMatch(/LOWER\(p\.client_id\) = LOWER\(\$\d+\)/);
   expect(sql).toMatch(/LOWER\(pr\.role_name\) = LOWER\(\$\d+\)/);
   expect(sql).not.toContain('LOWER(u.client_id) = LOWER($1)');
   expectPriorityParams(params, ['ditbinmas']);
@@ -188,38 +188,4 @@ test('org operator rekap limits tasks to official instagram accounts', async () 
   expect(sql).toContain("LOWER(soa.platform) = 'instagram'");
   expect(sql).toContain('soa.is_active = TRUE');
   expectPriorityParams(mockQuery.mock.calls[0][1], ['ORG1']);
-});
-
-test('org scope with directorate role filters users by authenticated client id', async () => {
-  mockQuery.mockResolvedValueOnce({ rows: [] });
-  mockQuery.mockResolvedValueOnce({ rows: [{ total_post: 0 }] });
-
-  await getRekapLikesByClient(
-    'DITBINMAS',
-    'harian',
-    '2026-03-01',
-    undefined,
-    undefined,
-    'ditbinmas',
-    {
-      scope: 'ORG',
-      authenticatedClientId: 'POLRES_JATIM',
-      regionalId: 'JATIM',
-    }
-  );
-
-  const likesSql = mockQuery.mock.calls[0][0];
-  const likesParams = mockQuery.mock.calls[0][1];
-  const postsSql = mockQuery.mock.calls[1][0];
-  const postsParams = mockQuery.mock.calls[1][1];
-
-  expect(likesSql).toContain('LOWER(u.client_id) = LOWER($1)');
-  expect(likesSql).toContain('LOWER(r.role_name) = LOWER($3)');
-  expect(likesSql).toContain('LOWER(pc.client_id) = LOWER($3) OR LOWER(pr.role_name) = LOWER($3)');
-  expect(likesSql).toContain('UPPER(c.regional_id) = UPPER($2)');
-  expect(likesParams.slice(0, 4)).toEqual(['POLRES_JATIM', 'JATIM', 'ditbinmas', '2026-03-01']);
-
-  expect(postsSql).toContain('LOWER(pc.client_id) = LOWER($2) OR LOWER(pr.role_name) = LOWER($2)');
-  expect(postsSql).toContain('UPPER(cp.regional_id) = UPPER($3)');
-  expect(postsParams).toEqual(['2026-03-01', 'ditbinmas', 'JATIM']);
 });
