@@ -139,7 +139,8 @@ export async function handleFetchLikesInstagram(waClient, chatId, client_id, opt
   try {
     // Ambil semua post IG milik client hari ini.
     // - Konten cron fetch dipetakan via insta_post_clients
-    // - Konten manual fetch tetap ikut lewat fallback client_id + source_type=manual_input
+    // - Fallback client_id tidak lagi dibatasi source_type agar data cron_fetch
+    //   tetap ikut terambil walau relasi insta_post_clients belum terbentuk.
     // Seluruh tanggal ditentukan menggunakan timezone Asia/Jakarta.
     const { rows } = await query(
       `WITH scoped_posts AS (
@@ -154,7 +155,6 @@ export async function handleFetchLikesInstagram(waClient, chatId, client_id, opt
           )
              OR (
                LOWER(TRIM(p.client_id)) = LOWER(TRIM($1))
-               AND COALESCE(NULLIF(TRIM(p.source_type), ''), 'cron_fetch') = 'manual_input'
                AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date
              )
           ORDER BY p.shortcode, p.created_at DESC
