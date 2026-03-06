@@ -43,23 +43,40 @@ const safeDeleteThresholdPercentByClient = (() => {
 /**
  * Utility: Cek apakah unixTimestamp adalah hari ini (Asia/Jakarta)
  */
-function isTodayJakarta(unixTimestamp) {
-  if (!unixTimestamp) return false;
-  
-  // Convert Unix timestamp to Date object
-  const postDate = new Date(unixTimestamp * 1000);
-  
-  // Get the date string in Jakarta timezone (format: YYYY-MM-DD)
+function normalizeInstagramTimestampMs(rawTimestamp) {
+  if (rawTimestamp === null || rawTimestamp === undefined || rawTimestamp === "") {
+    return null;
+  }
+
+  const numericTimestamp = Number(rawTimestamp);
+  if (!Number.isFinite(numericTimestamp)) {
+    const parsedDate = new Date(rawTimestamp);
+    const parsedDateMs = parsedDate.getTime();
+    return Number.isFinite(parsedDateMs) ? parsedDateMs : null;
+  }
+
+  // Instagram API dapat mengembalikan epoch dalam detik atau milidetik.
+  // Nilai >= 1e12 diasumsikan sudah milidetik.
+  return numericTimestamp >= 1e12 ? numericTimestamp : numericTimestamp * 1000;
+}
+
+function normalizeInstagramTimestampSeconds(rawTimestamp) {
+  const timestampMs = normalizeInstagramTimestampMs(rawTimestamp);
+  if (!Number.isFinite(timestampMs)) return null;
+  return Math.floor(timestampMs / 1000);
+}
+
+function isTodayJakarta(rawTimestamp) {
+  const timestampMs = normalizeInstagramTimestampMs(rawTimestamp);
+  if (!Number.isFinite(timestampMs)) return false;
+
+  const postDate = new Date(timestampMs);
   const postDateJakarta = postDate.toLocaleDateString("en-CA", {
     timeZone: "Asia/Jakarta",
   });
-  
-  // Get today's date string in Jakarta timezone (format: YYYY-MM-DD)
   const todayJakarta = new Date().toLocaleDateString("en-CA", {
     timeZone: "Asia/Jakarta",
   });
-  
-  // Compare the date strings directly
   return postDateJakarta === todayJakarta;
 }
 
@@ -491,6 +508,8 @@ export async function fetchAndStoreInstaContent(
         msg: `[DB] Upsert IG post: ${toSave.shortcode}`,
         client_id: client.id
       });
+      const originalCreatedAtSeconds = normalizeInstagramTimestampSeconds(post.taken_at);
+
       await query(
         `INSERT INTO insta_post (client_id, shortcode, caption, comment_count, like_count, thumbnail_url, is_video, video_url, image_url, images_url, is_carousel, source_type, created_at, original_created_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW(),to_timestamp($13))
@@ -523,7 +542,7 @@ export async function fetchAndStoreInstaContent(
           JSON.stringify(toSave.images_url),
           toSave.is_carousel,
           "cron_fetch",
-          post.taken_at,
+          originalCreatedAtSeconds,
         ]
       );
       
