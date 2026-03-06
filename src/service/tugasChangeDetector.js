@@ -14,7 +14,7 @@ const MISSING_SHORTLIST_LIMIT = 5;
 export async function getRecentInstaPosts(clientId) {
   try {
     const result = await query(
-      `SELECT shortcode, caption, like_count, timestamp, created_at
+      `SELECT shortcode, caption, like_count, created_at
        FROM insta_post
        WHERE LOWER(client_id) = LOWER($1)
          AND created_at >= NOW() - INTERVAL '24 hours'
@@ -36,11 +36,12 @@ export async function getRecentInstaPosts(clientId) {
 export async function getRecentTiktokPosts(clientId) {
   try {
     const result = await query(
-      `SELECT video_id, description, author_username, created_at
-       FROM tiktok_post
-       WHERE LOWER(client_id) = LOWER($1)
-         AND created_at >= NOW() - INTERVAL '24 hours'
-       ORDER BY created_at DESC`,
+      `SELECT tp.video_id, tp.caption, c.client_tiktok AS author_username, tp.created_at
+       FROM tiktok_post tp
+       LEFT JOIN clients c ON c.client_id = tp.client_id
+       WHERE LOWER(tp.client_id) = LOWER($1)
+         AND tp.created_at >= NOW() - INTERVAL '24 hours'
+       ORDER BY tp.created_at DESC`,
       [clientId]
     );
     return result.rows || [];
