@@ -111,6 +111,7 @@ export async function handleFetchKomentarTiktokBatch(waClient = null, chatId = n
     const todayJakarta = resolveJakartaDateString();
     const normalizedId = normalizeClientId(client_id);
     const { rows } = await query(
+      // Tidak membatasi source_type: semua video TikTok client hari ini ikut diproses.
       `SELECT video_id FROM tiktok_post WHERE LOWER(TRIM(client_id)) = $1 AND (created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date`,
       [normalizedId, todayJakarta]
     );

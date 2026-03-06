@@ -78,3 +78,18 @@ test('handler includes usernames from nested replies and deduplicates before ups
   expect(saved).toEqual(expect.arrayContaining(['@parenta', '@replya']));
   expect(saved.filter((uname) => uname === '@parenta')).toHaveLength(1);
 });
+
+
+test('query pengambilan video tidak memfilter source_type', async () => {
+  mockQuery
+    .mockResolvedValueOnce({ rows: [{ video_id: 'vid4' }] })
+    .mockResolvedValueOnce({ rows: [] })
+    .mockResolvedValueOnce({ rows: [] })
+    .mockResolvedValueOnce({ rows: [] });
+  mockFetchAll.mockResolvedValueOnce([]);
+
+  await handleFetchKomentarTiktokBatch(null, null, 'POLRES4');
+
+  const [firstSql] = mockQuery.mock.calls[0];
+  expect(firstSql.toLowerCase()).not.toContain('source_type');
+});
