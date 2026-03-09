@@ -15,6 +15,14 @@ const RAPIDAPI_HOST = 'tiktok-api23.p.rapidapi.com';
 const RAPIDAPI_KEY = env.RAPIDAPI_KEY;
 const RAPIDAPI_FALLBACK_KEY = env.RAPIDAPI_FALLBACK_KEY;
 const RAPIDAPI_FALLBACK_HOST = env.RAPIDAPI_FALLBACK_HOST;
+const TIKTOK_WEB_BASE_URL = 'https://www.tiktok.com';
+const TIKTOK_WEB_COMMENT_REPLY_ENDPOINT = '/api/comment/list/reply/';
+const TIKTOK_WEB_DEFAULT_HEADERS = {
+  Accept: 'application/json, text/plain, */*',
+  Referer: `${TIKTOK_WEB_BASE_URL}/`,
+  'User-Agent':
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+};
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -317,6 +325,69 @@ export async function fetchTiktokCommentsPage(videoId, cursor = 0, count = 50) {
   }
 }
 
+function parseCommentListPayload(payload) {
+  const comments =
+    payload?.comments ||
+    payload?.data?.comments ||
+    payload?.comment_list ||
+    payload?.data?.comment_list ||
+    [];
+  const safeComments = Array.isArray(comments) ? comments : [];
+  const hasMoreRaw =
+    payload?.has_more ?? payload?.data?.has_more ?? payload?.hasMore ?? payload?.data?.hasMore;
+  const hasMore = hasMoreRaw === true || Number(hasMoreRaw) === 1;
+  const nextCursorRaw =
+    payload?.cursor ?? payload?.data?.cursor ?? payload?.next_cursor ?? payload?.data?.next_cursor;
+  const nextCursor = Number.isFinite(Number(nextCursorRaw)) ? Number(nextCursorRaw) : null;
+  return {
+    comments: safeComments,
+    hasMore,
+    nextCursor,
+  };
+}
+
+async function fetchTiktokCommentRepliesPageWeb(videoId, commentId, cursor = 0, count = 50) {
+  const res = await axios.get(`${TIKTOK_WEB_BASE_URL}${TIKTOK_WEB_COMMENT_REPLY_ENDPOINT}`, {
+    params: {
+      item_id: videoId,
+      comment_id: commentId,
+      cursor: String(cursor),
+      count: String(count),
+    },
+    headers: TIKTOK_WEB_DEFAULT_HEADERS,
+  });
+  const parsed = parseCommentListPayload(res?.data || {});
+  const nextCursor = parsed.hasMore
+    ? parsed.nextCursor ?? cursor + count
+    : null;
+  return {
+    comments: parsed.comments,
+    next_cursor: nextCursor,
+  };
+}
+
+async function fetchAllTiktokCommentRepliesWeb(videoId, commentId, count = 50) {
+  if (!videoId || !commentId) return [];
+  const allReplies = [];
+  let cursor = 0;
+
+  while (true) {
+    const { comments, next_cursor } = await fetchTiktokCommentRepliesPageWeb(
+      videoId,
+      commentId,
+      cursor,
+      count
+    );
+    if (!comments.length) break;
+    allReplies.push(...comments);
+    if (!next_cursor) break;
+    cursor = next_cursor;
+    await delay(300);
+  }
+
+  return allReplies;
+}
+
 export async function fetchTiktokPostDetail(videoId) {
   if (!videoId) {
     throw new Error('Parameter videoId wajib diisi.');
@@ -361,5 +432,29 @@ export async function fetchAllTiktokComments(videoId) {
     cursor = next_cursor;
     await new Promise(r => setTimeout(r, 2000));
   }
+
+  for (const comment of all) {
+    const commentId = comment?.cid || comment?.comment_id || comment?.id;
+    const existingReplies = Array.isArray(comment?.reply_comment) ? comment.reply_comment : [];
+    const totalReplies = Number(comment?.reply_comment_total ?? comment?.reply_comment_count ?? 0) || 0;
+
+    if (!commentId || totalReplies <= existingReplies.length) {
+      continue;
+    }
+
+    try {
+      const fetchedReplies = await fetchAllTiktokCommentRepliesWeb(videoId, commentId);
+      const mergedReplies = [...existingReplies, ...fetchedReplies];
+      comment.reply_comment = mergedReplies;
+    } catch (err) {
+      const message = err?.response?.data
+        ? JSON.stringify(err.response.data)
+        : err?.message || String(err);
+      console.warn(
+        `[TikTok] Gagal mengambil reply comment untuk video ${videoId}, comment ${commentId}: ${message}`
+      );
+    }
+  }
+
   return all;
 }
