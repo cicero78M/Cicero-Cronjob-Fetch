@@ -110,12 +110,26 @@ export async function handleFetchKomentarTiktokBatch(waClient = null, chatId = n
   try {
     const todayJakarta = resolveJakartaDateString();
     const normalizedId = normalizeClientId(client_id);
+    if (!normalizedId) {
+      throw new Error("client_id wajib diisi untuk fetch komentar TikTok");
+    }
     const { rows } = await query(
-      // Tidak membatasi source_type: semua video TikTok client hari ini ikut diproses.
-      `SELECT video_id FROM tiktok_post WHERE LOWER(TRIM(client_id)) = $1 AND (created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date`,
+      // Tidak membatasi source_type: semua video TikTok client hari ini ikut diproses
+      // (baik cron_fetch maupun manual_input/manual_fetch, dll).
+      `SELECT video_id,
+              COALESCE(NULLIF(TRIM(source_type), ''), 'cron_fetch') AS source_type
+         FROM tiktok_post
+        WHERE LOWER(TRIM(client_id)) = $1
+          AND (created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date
+          AND NULLIF(TRIM(video_id), '') IS NOT NULL`,
       [normalizedId, todayJakarta]
     );
-    const videoIds = rows.map((r) => r.video_id);
+    const sourceTypeBreakdown = rows.reduce((acc, row) => {
+      const sourceType = String(row.source_type || "cron_fetch").toLowerCase();
+      acc[sourceType] = (acc[sourceType] || 0) + 1;
+      return acc;
+    }, {});
+    const videoIds = [...new Set(rows.map((r) => r.video_id).filter(Boolean))];
     const excRes = await query(
       `SELECT tiktok FROM "user" WHERE exception = true AND tiktok IS NOT NULL`
     );
@@ -124,7 +138,7 @@ export async function handleFetchKomentarTiktokBatch(waClient = null, chatId = n
       .filter(Boolean);
     sendDebug({
       tag: "TTK COMMENT",
-      msg: `Client ${client_id}: Jumlah video hari ini: ${videoIds.length}`,
+      msg: `Client ${client_id}: Jumlah video hari ini: ${videoIds.length}. source_type=${JSON.stringify(sourceTypeBreakdown)}`,
       client_id,
     });
     if (waClient && chatId) {
