@@ -51,6 +51,7 @@ CREATE TABLE "user" (
   client_id VARCHAR REFERENCES clients(client_id),
   status BOOLEAN DEFAULT TRUE,
   exception BOOLEAN DEFAULT FALSE,
+  exception_tiktok BOOLEAN DEFAULT FALSE,
   wa_notification_opt_in BOOLEAN NOT NULL DEFAULT FALSE,
   premium_status BOOLEAN DEFAULT FALSE,
   premium_end_date DATE,
