@@ -83,6 +83,8 @@ Holds users belonging to a client.
 - `email` – optional, validated during OTP flows
 - `client_id` – foreign key referencing `clients(client_id)`
 - `status` – boolean flag
+- `exception` – boolean flag pengecualian umum legacy (dipakai lintas flow lama seperti rekap engagement umum)
+- `exception_tiktok` – boolean flag pengecualian khusus untuk mekanisme rekap komentar TikTok
 - `premium_status` – boolean flag indicating active subscription
 - `premium_end_date` – date the premium access expires
 - `created_at`, `updated_at` – timestamps managed by the database trigger

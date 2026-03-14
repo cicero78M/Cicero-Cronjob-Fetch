@@ -28,6 +28,7 @@ export async function importUsersFromSpreadsheet(filePath, clientId) {
             insta: null,
             tiktok: null,
             exception: false,
+            exception_tiktok: false,
             client_id: clientId
           });
         }

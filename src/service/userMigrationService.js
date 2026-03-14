@@ -13,7 +13,8 @@ const jsonToDbMap = {
   WHATSAPP: 'whatsapp',
   INSTA: 'insta',
   TIKTOK: 'tiktok',
-  EXCEPTION: 'exception'
+  EXCEPTION: 'exception',
+  EXCEPTION_TIKTOK: 'exception_tiktok'
 };
 
 export async function migrateUsersFromFolder(clientId) {
@@ -38,7 +39,7 @@ export async function migrateUsersFromFolder(clientId) {
               if (val && val.length < 8) val = val.padStart(8, '0');
             }
             // KOREKSI: boolean TRUE/FALSE
-            if (['status', 'exception'].includes(jsonToDbMap[key])) {
+            if (['status', 'exception', 'exception_tiktok'].includes(jsonToDbMap[key])) {
               if (typeof val === "string") {
                 if (val.trim().toLowerCase() === 'true') val = true;
                 else if (val.trim().toLowerCase() === 'false') val = false;
@@ -52,7 +53,7 @@ export async function migrateUsersFromFolder(clientId) {
             user[jsonToDbMap[key]] = val;
           } else {
             // Field tidak ada, isi false
-            if (['status', 'exception'].includes(jsonToDbMap[key])) {
+            if (['status', 'exception', 'exception_tiktok'].includes(jsonToDbMap[key])) {
               user[jsonToDbMap[key]] = false;
             }
           }
