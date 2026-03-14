@@ -68,6 +68,61 @@ function extractUniqueUsernamesFromComments(commentsArr) {
   return [...new Set(commentUsernames)];
 }
 
+async function getEligibleExceptionTiktokUsers(clientId, jakartaDate) {
+  const { rows } = await query(
+    `WITH scoped_posts AS (
+       SELECT DISTINCT p.shortcode
+         FROM insta_post p
+         LEFT JOIN insta_post_clients pc ON pc.shortcode = p.shortcode
+        WHERE (
+          LOWER(TRIM(pc.client_id)) = $1
+          AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date
+        )
+           OR (
+             LOWER(TRIM(p.client_id)) = $1
+             AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date
+           )
+     ),
+     total_post_scope AS (
+       SELECT COUNT(DISTINCT shortcode) AS total_post_ig
+         FROM scoped_posts
+     ),
+     like_counts AS (
+       SELECT
+         LOWER(REPLACE(TRIM(COALESCE(elem->>'username', TRIM(BOTH '"' FROM elem::text))), '@', '')) AS username_ig,
+         COUNT(DISTINCT l.shortcode) AS jumlah_like_user
+       FROM scoped_posts sp
+       JOIN insta_like l ON l.shortcode = sp.shortcode
+       JOIN LATERAL jsonb_array_elements(COALESCE(l.likes, '[]'::jsonb)) AS elem ON TRUE
+       GROUP BY 1
+     )
+     SELECT
+       u.user_id,
+       u.nama,
+       u.insta,
+       u.tiktok,
+       COALESCE(tps.total_post_ig, 0) AS total_post_ig,
+       COALESCE(lc.jumlah_like_user, 0) AS jumlah_like_user,
+       CASE
+         WHEN COALESCE(u.exception_tiktok, false) <> true THEN 'exception_tiktok=false'
+         WHEN NULLIF(TRIM(COALESCE(u.tiktok, '')), '') IS NULL THEN 'username_tiktok_kosong'
+         WHEN NULLIF(TRIM(COALESCE(u.insta, '')), '') IS NULL THEN 'username_ig_kosong'
+         WHEN COALESCE(lc.jumlah_like_user, 0) < COALESCE(tps.total_post_ig, 0) THEN 'likes_belum_lengkap'
+         ELSE 'eligible'
+       END AS eligibility_reason
+     FROM "user" u
+     CROSS JOIN total_post_scope tps
+     LEFT JOIN like_counts lc
+       ON LOWER(REPLACE(TRIM(COALESCE(u.insta, '')), '@', '')) = lc.username_ig
+    WHERE LOWER(TRIM(COALESCE(u.client_id, ''))) = $1
+      AND u.status = true`
+    ,
+    [clientId, jakartaDate]
+  );
+
+  return rows;
+}
+
 // Ambil komentar lama (existing) dari DB (username string array)
 async function getExistingUsernames(video_id) {
   const res = await query(
@@ -130,15 +185,26 @@ export async function handleFetchKomentarTiktokBatch(waClient = null, chatId = n
       return acc;
     }, {});
     const videoIds = [...new Set(rows.map((r) => r.video_id).filter(Boolean))];
-    const excRes = await query(
-      `SELECT tiktok FROM "user" WHERE exception = true AND tiktok IS NOT NULL`
-    );
-    const exceptionUsernames = excRes.rows
+    const eligibleExceptionUsers = await getEligibleExceptionTiktokUsers(normalizedId, todayJakarta);
+    const eligibleRows = eligibleExceptionUsers.filter((row) => row.eligibility_reason === "eligible");
+    const skipReasonCounts = eligibleExceptionUsers.reduce((acc, row) => {
+      const reason = row.eligibility_reason;
+      if (reason !== "eligible") {
+        acc[reason] = (acc[reason] || 0) + 1;
+      }
+      return acc;
+    }, {});
+    const exceptionUsernames = eligibleRows
       .map((r) => normalizeTiktokCommentUsername(r.tiktok))
       .filter(Boolean);
     sendDebug({
       tag: "TTK COMMENT",
       msg: `Client ${client_id}: Jumlah video hari ini: ${videoIds.length}. source_type=${JSON.stringify(sourceTypeBreakdown)}`,
+      client_id,
+    });
+    sendDebug({
+      tag: "TTK COMMENT ELIGIBILITY",
+      msg: `Client ${client_id}: eligible exception_tiktok users=${eligibleRows.length}, skipped=${eligibleExceptionUsers.length - eligibleRows.length}, skip_reasons=${JSON.stringify(skipReasonCounts)}`,
       client_id,
     });
     if (waClient && chatId) {
