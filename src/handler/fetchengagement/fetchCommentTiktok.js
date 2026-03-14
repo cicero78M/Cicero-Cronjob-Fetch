@@ -53,6 +53,20 @@ function resolveJakartaDateString(referenceDate = new Date()) {
   });
 }
 
+async function resolveClientScope(clientId) {
+  const { rows } = await query(
+    "SELECT client_type FROM clients WHERE LOWER(TRIM(client_id)) = $1 LIMIT 1",
+    [clientId]
+  );
+  const clientType = rows[0]?.client_type
+    ? String(rows[0].client_type).toLowerCase()
+    : null;
+  return {
+    clientType,
+    isRoleScoped: clientType === "direktorat",
+  };
+}
+
 /**
  * Fetch semua komentar TikTok untuk 1 video_id dari API terbaru
  * Return: array komentar (object asli dari API)
@@ -68,20 +82,41 @@ function extractUniqueUsernamesFromComments(commentsArr) {
   return [...new Set(commentUsernames)];
 }
 
-async function getEligibleExceptionTiktokUsers(clientId, jakartaDate) {
+async function getEligibleExceptionTiktokUsers(clientId, jakartaDate, scope = {}) {
+  const { isRoleScoped = false } = scope;
+  const postScopeFilter = isRoleScoped
+    ? `(
+          LOWER(TRIM(COALESCE(pc.client_id, ''))) = $1
+          OR LOWER(TRIM(COALESCE(p.client_id, ''))) = $1
+          OR LOWER(TRIM(COALESCE(pr.role_name, ''))) = $1
+        )`
+    : `(
+          LOWER(TRIM(COALESCE(pc.client_id, ''))) = $1
+          OR LOWER(TRIM(COALESCE(p.client_id, ''))) = $1
+        )`;
+  const userScopeFilter = isRoleScoped
+    ? `(
+          LOWER(TRIM(u.client_id)) = $1
+          OR EXISTS (
+            SELECT 1
+            FROM user_roles ur
+            JOIN roles r ON ur.role_id = r.role_id
+            WHERE ur.user_id = u.user_id
+              AND LOWER(TRIM(COALESCE(r.role_name, ''))) = $1
+          )
+        )`
+    : "LOWER(TRIM(u.client_id)) = $1";
+
   const { rows } = await query(
     `WITH scoped_posts AS (
        SELECT DISTINCT p.shortcode
          FROM insta_post p
          LEFT JOIN insta_post_clients pc ON pc.shortcode = p.shortcode
+         LEFT JOIN insta_post_roles pr ON pr.shortcode = p.shortcode
         WHERE (
-          LOWER(TRIM(pc.client_id)) = $1
+          ${postScopeFilter}
           AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date
         )
-           OR (
-             LOWER(TRIM(p.client_id)) = $1
-             AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date
-           )
      ),
      total_post_scope AS (
        SELECT COUNT(DISTINCT shortcode) AS total_post_ig
@@ -114,7 +149,7 @@ async function getEligibleExceptionTiktokUsers(clientId, jakartaDate) {
      CROSS JOIN total_post_scope tps
      LEFT JOIN like_counts lc
        ON LOWER(REPLACE(TRIM(COALESCE(u.insta, '')), '@', '')) = lc.username_ig
-    WHERE LOWER(TRIM(COALESCE(u.client_id, ''))) = $1
+    WHERE ${userScopeFilter}
       AND u.status = true`
     ,
     [clientId, jakartaDate]
@@ -168,24 +203,27 @@ export async function handleFetchKomentarTiktokBatch(waClient = null, chatId = n
     if (!normalizedId) {
       throw new Error("client_id wajib diisi untuk fetch komentar TikTok");
     }
-    const { rows } = await query(
-      // Tidak membatasi source_type: semua video TikTok client hari ini ikut diproses
-      // (baik cron_fetch maupun manual_input/manual_fetch, dll).
-      `SELECT video_id,
-              COALESCE(NULLIF(TRIM(source_type), ''), 'cron_fetch') AS source_type
-         FROM tiktok_post
-        WHERE LOWER(TRIM(client_id)) = $1
-          AND (created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date
-          AND NULLIF(TRIM(video_id), '') IS NOT NULL`,
+    const scope = await resolveClientScope(normalizedId);
+    const videoScopeFilter = scope.isRoleScoped
+      ? `(LOWER(TRIM(COALESCE(p.client_id, ''))) = $1 OR LOWER(TRIM(COALESCE(pr.role_name, ''))) = $1)`
+      : "LOWER(TRIM(COALESCE(p.client_id, ''))) = $1";
+    const { rows: scopedVideoRows } = await query(
+      `SELECT DISTINCT p.video_id,
+              COALESCE(NULLIF(TRIM(p.source_type), ''), 'cron_fetch') AS source_type
+         FROM tiktok_post p
+         LEFT JOIN tiktok_post_roles pr ON pr.video_id = p.video_id
+        WHERE ${videoScopeFilter}
+          AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date
+          AND NULLIF(TRIM(p.video_id), '') IS NOT NULL`,
       [normalizedId, todayJakarta]
     );
-    const sourceTypeBreakdown = rows.reduce((acc, row) => {
+    const scopedSourceTypeBreakdown = scopedVideoRows.reduce((acc, row) => {
       const sourceType = String(row.source_type || "cron_fetch").toLowerCase();
       acc[sourceType] = (acc[sourceType] || 0) + 1;
       return acc;
     }, {});
-    const videoIds = [...new Set(rows.map((r) => r.video_id).filter(Boolean))];
-    const eligibleExceptionUsers = await getEligibleExceptionTiktokUsers(normalizedId, todayJakarta);
+    const scopedVideoIds = [...new Set(scopedVideoRows.map((r) => r.video_id).filter(Boolean))];
+    const eligibleExceptionUsers = await getEligibleExceptionTiktokUsers(normalizedId, todayJakarta, scope);
     const eligibleRows = eligibleExceptionUsers.filter((row) => row.eligibility_reason === "eligible");
     const skipReasonCounts = eligibleExceptionUsers.reduce((acc, row) => {
       const reason = row.eligibility_reason;
@@ -199,7 +237,7 @@ export async function handleFetchKomentarTiktokBatch(waClient = null, chatId = n
       .filter(Boolean);
     sendDebug({
       tag: "TTK COMMENT",
-      msg: `Client ${client_id}: Jumlah video hari ini: ${videoIds.length}. source_type=${JSON.stringify(sourceTypeBreakdown)}`,
+      msg: `Client ${client_id}: Jumlah video hari ini: ${scopedVideoIds.length}. source_type=${JSON.stringify(scopedSourceTypeBreakdown)}`,
       client_id,
     });
     sendDebug({
@@ -208,10 +246,10 @@ export async function handleFetchKomentarTiktokBatch(waClient = null, chatId = n
       client_id,
     });
     if (waClient && chatId) {
-      await waClient.sendMessage(chatId, `⏳ Fetch komentar ${videoIds.length} video TikTok...`);
+      await waClient.sendMessage(chatId, `⏳ Fetch komentar ${scopedVideoIds.length} video TikTok...`);
     }
 
-    if (!videoIds.length) {
+    if (!scopedVideoIds.length) {
       if (waClient && chatId) await waClient.sendMessage(chatId, `Tidak ada konten TikTok hari ini untuk client ${client_id}.`);
       sendDebug({
         tag: "TTK COMMENT",
@@ -234,7 +272,7 @@ export async function handleFetchKomentarTiktokBatch(waClient = null, chatId = n
     });
 
     const taskResults = await Promise.all(
-      videoIds.map((videoId) =>
+      scopedVideoIds.map((videoId) =>
         limit(async () => {
           const startedAt = Date.now();
           try {
