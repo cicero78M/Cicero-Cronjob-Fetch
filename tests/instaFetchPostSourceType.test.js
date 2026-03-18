@@ -177,3 +177,157 @@ test('manual input hari ini tetap memakai source_type manual_input dan created_a
   expect(originalCreatedAtMs).toBe(yesterday * 1000);
   expect(new Date(upsertPayload.created_at).toDateString()).toBe(new Date().toDateString());
 });
+
+test('fail-safe delete lanjut ke client berikutnya untuk error replica identity', async () => {
+  const todayUnix = Math.floor(Date.now() / 1000);
+  mockFetchInstagramPosts.mockResolvedValue([
+    {
+      code: 'KEEP_TODAY',
+      taken_at: todayUnix,
+      comment_count: 0,
+      like_count: 0,
+    },
+  ]);
+
+  mockQuery.mockImplementation(async (sql, params = []) => {
+    if (sql.includes('FROM clients') && sql.includes('client_status=true')) {
+      return {
+        rows: [
+          { id: 'clientA', client_insta: 'officialA' },
+          { id: 'clientB', client_insta: 'officialB' },
+        ],
+      };
+    }
+
+    if (sql.includes('FROM insta_post_clients pc') && sql.includes('JOIN insta_post p')) {
+      if (params[0] === 'clientA') return { rows: [{ shortcode: 'OLD_A' }, { shortcode: 'KEEP_TODAY' }] };
+      if (params[0] === 'clientB') return { rows: [{ shortcode: 'OLD_B' }, { shortcode: 'KEEP_TODAY' }] };
+      return { rows: [] };
+    }
+
+    if (sql.includes('SELECT client_insta FROM clients WHERE client_id = $1')) {
+      return { rows: [{ client_insta: params[0] === 'clientA' ? 'officialA' : 'officialB' }] };
+    }
+
+    if (sql.includes('SELECT to_regclass($1) AS table_name')) {
+      return { rows: [{ table_name: 'exists' }] };
+    }
+
+    if (sql.includes('SELECT p.shortcode, p.source_type, u.username')) {
+      return { rows: [{ shortcode: params[0][0], source_type: 'cron_fetch', username: 'officialA' }] };
+    }
+
+    if (sql.includes('DELETE FROM insta_post_clients')) {
+      if (params[1] === 'clientA') {
+        const err = new Error('cannot delete from table "insta_post_clients" because it does not have a replica identity and publishes deletes');
+        err.code = '55000';
+        throw err;
+      }
+      return { rowCount: 1, rows: [] };
+    }
+
+    if (sql.includes('WHERE p.shortcode = ANY($1)') && sql.includes('NOT EXISTS')) {
+      return { rows: [{ shortcode: params[0][0] }] };
+    }
+
+    if (
+      sql.includes('DELETE FROM insta_like_audit') ||
+      sql.includes('DELETE FROM insta_like WHERE') ||
+      sql.includes('DELETE FROM insta_comment') ||
+      sql.includes('DELETE FROM insta_post')
+    ) {
+      return { rowCount: 1, rows: [] };
+    }
+
+    if (sql.includes('INSERT INTO insta_post') && sql.includes('ON CONFLICT (shortcode) DO UPDATE')) {
+      return { rowCount: 1, rows: [] };
+    }
+
+    if (sql.includes('SELECT shortcode FROM insta_post WHERE client_id = $1')) {
+      return { rows: [{ shortcode: 'KEEP_TODAY' }] };
+    }
+
+    if (sql.includes('SELECT shortcode, created_at FROM insta_post')) {
+      return { rows: [] };
+    }
+
+    return { rows: [] };
+  });
+
+  const summary = await fetchAndStoreInstaContent(null, null, null, null);
+
+  expect(summary.clientA).toBeDefined();
+  expect(summary.clientB).toBeDefined();
+  expect(mockSendDebug).toHaveBeenCalledWith(
+    expect.objectContaining({
+      tag: 'IG_DELETE_CASCADE_FAILED',
+      client_id: 'clientA',
+      error_classification: 'REPLICATION_IDENTITY_MISSING',
+      fail_safe: true,
+    }),
+  );
+  expect(mockSendDebug).toHaveBeenCalledWith(
+    expect.objectContaining({
+      tag: 'IG SAFE DELETE',
+      msg: expect.stringContaining('"action":"delete_fail_safe_continue"'),
+      client_id: 'clientA',
+    }),
+  );
+});
+
+test('delete error non-replica identity tetap fail-fast', async () => {
+  const todayUnix = Math.floor(Date.now() / 1000);
+  mockFetchInstagramPosts.mockResolvedValue([
+    {
+      code: 'KEEP_TODAY',
+      taken_at: todayUnix,
+      comment_count: 0,
+      like_count: 0,
+    },
+  ]);
+
+  mockQuery.mockImplementation(async (sql, params = []) => {
+    if (sql.includes('FROM clients') && sql.includes('client_status=true')) {
+      return { rows: [{ id: 'clientA', client_insta: 'officialA' }] };
+    }
+
+    if (sql.includes('FROM insta_post_clients pc') && sql.includes('JOIN insta_post p')) {
+      return { rows: [{ shortcode: 'OLD_A' }, { shortcode: 'KEEP_TODAY' }] };
+    }
+
+    if (sql.includes('SELECT client_insta FROM clients WHERE client_id = $1')) {
+      return { rows: [{ client_insta: 'officialA' }] };
+    }
+
+    if (sql.includes('SELECT to_regclass($1) AS table_name')) {
+      return { rows: [{ table_name: 'exists' }] };
+    }
+
+    if (sql.includes('SELECT p.shortcode, p.source_type, u.username')) {
+      return { rows: [{ shortcode: 'OLD_A', source_type: 'cron_fetch', username: 'officialA' }] };
+    }
+
+    if (sql.includes('DELETE FROM insta_post_clients')) {
+      const err = new Error('deadlock detected');
+      err.code = '40P01';
+      throw err;
+    }
+
+    if (sql.includes('INSERT INTO insta_post') && sql.includes('ON CONFLICT (shortcode) DO UPDATE')) {
+      return { rowCount: 1, rows: [] };
+    }
+
+    return { rows: [] };
+  });
+
+  await expect(fetchAndStoreInstaContent(null, null, null, null)).rejects.toThrow('deadlock detected');
+
+  expect(mockSendDebug).toHaveBeenCalledWith(
+    expect.objectContaining({
+      tag: 'IG_DELETE_CASCADE_FAILED',
+      client_id: 'clientA',
+      error_classification: 'UNCLASSIFIED_DELETE_ERROR',
+      fail_safe: false,
+    }),
+  );
+});
