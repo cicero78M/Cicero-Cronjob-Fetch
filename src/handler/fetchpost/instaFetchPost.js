@@ -251,6 +251,69 @@ async function deleteShortcodes(shortcodesToDelete, clientId = null) {
   }
 }
 
+function classifyDeleteShortcodesError(err) {
+  const errorCode = err?.code || err?.sqlState || err?.original?.code || "UNKNOWN_DB_ERROR";
+  const errorMessage = err?.message || "Unknown delete error";
+  const normalizedMessage = String(errorMessage).toLowerCase();
+
+  const isReplicationIdentityError =
+    normalizedMessage.includes("replica identity") ||
+    normalizedMessage.includes("publishes deletes");
+
+  return {
+    errorCode,
+    errorMessage,
+    classification: isReplicationIdentityError
+      ? "REPLICATION_IDENTITY_MISSING"
+      : "UNCLASSIFIED_DELETE_ERROR",
+    isFailSafe: isReplicationIdentityError,
+  };
+}
+
+async function executeDeleteShortcodesWithFailSafe(shortcodesToDelete, clientId = null) {
+  try {
+    await deleteShortcodes(shortcodesToDelete, clientId);
+  } catch (err) {
+    const classification = classifyDeleteShortcodesError(err);
+    const structuredContext = {
+      tag: "IG_DELETE_CASCADE_FAILED",
+      client_id: clientId,
+      shortcode_count: shortcodesToDelete.length,
+      sql_error_code: classification.errorCode,
+      sql_error_message: classification.errorMessage,
+      error_classification: classification.classification,
+      fail_safe: classification.isFailSafe,
+    };
+
+    sendDebug({
+      ...structuredContext,
+      msg: `Delete cascade gagal: class=${classification.classification}`,
+    });
+
+    sendDebug({
+      tag: "IG SAFE DELETE",
+      msg: toSafeDeleteAuditLog({
+        action: "delete_failed",
+        ...structuredContext,
+      }),
+      client_id: clientId,
+    });
+
+    if (classification.isFailSafe) {
+      sendDebug({
+        tag: "IG OPS ALERT",
+        msg: `Fail-safe aktif: delete dilewati karena ${classification.classification}. Lanjut fetch client berikutnya.`,
+        client_id: clientId,
+      });
+      return { skipped: true, reason: classification.classification };
+    }
+
+    throw err;
+  }
+
+  return { skipped: false, reason: null };
+}
+
 async function filterOfficialInstagramShortcodes(shortcodes = [], clientId = null) {
   if (!shortcodes.length) return [];
 
@@ -633,7 +696,22 @@ export async function fetchAndStoreInstaContent(
         client_id: client.id,
       });
 
-      await deleteShortcodes(safeShortcodesToDelete, client.id);
+      const deleteResult = await executeDeleteShortcodesWithFailSafe(
+        safeShortcodesToDelete,
+        client.id
+      );
+      if (deleteResult.skipped) {
+        sendDebug({
+          tag: "IG SAFE DELETE",
+          msg: toSafeDeleteAuditLog({
+            action: "delete_fail_safe_continue",
+            reason: deleteResult.reason,
+            client_id: client.id,
+            deleteCandidates: safeShortcodesToDelete.length,
+          }),
+          client_id: client.id,
+        });
+      }
       }
       }
     } else {
