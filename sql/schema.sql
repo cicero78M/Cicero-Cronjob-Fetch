@@ -460,6 +460,7 @@ CREATE TABLE visitor_logs (
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
+    task_id BIGSERIAL PRIMARY KEY,
     shortcode VARCHAR REFERENCES insta_post(shortcode) ON DELETE CASCADE,
     user_id VARCHAR REFERENCES "user"(user_id),
     created_at TIMESTAMP DEFAULT NOW()
