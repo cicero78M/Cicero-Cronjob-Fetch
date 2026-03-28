@@ -307,9 +307,9 @@ export async function getPostsByFilters(
     } else if (periode === 'mingguan') {
       if (tanggal) {
         const tanggalIdx = addParamFn(tanggal);
-        filter = `date_trunc('week', p.created_at) = date_trunc('week', ${tanggalIdx}::date)`;
+        filter = `date_trunc('week', p.created_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('week', (${tanggalIdx}::timestamp AT TIME ZONE 'Asia/Jakarta'))`;
       } else {
-        filter = "date_trunc('week', p.created_at) = date_trunc('week', NOW())";
+        filter = "date_trunc('week', p.created_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('week', NOW() AT TIME ZONE 'Asia/Jakarta')";
       }
     } else if (periode === 'bulanan') {
       if (tanggal) {
@@ -443,9 +443,9 @@ export async function countPostsByClient(
     } else if (periode === 'mingguan') {
       if (tanggal) {
         const tanggalIdx = addParamFn(tanggal);
-        filter = `date_trunc('week', p.created_at) = date_trunc('week', ${tanggalIdx}::date)`;
+        filter = `date_trunc('week', p.created_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('week', (${tanggalIdx}::timestamp AT TIME ZONE 'Asia/Jakarta'))`;
       } else {
-        filter = "date_trunc('week', p.created_at) = date_trunc('week', NOW())";
+        filter = "date_trunc('week', p.created_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('week', NOW() AT TIME ZONE 'Asia/Jakarta')";
       }
     } else if (periode === 'bulanan') {
       if (tanggal) {

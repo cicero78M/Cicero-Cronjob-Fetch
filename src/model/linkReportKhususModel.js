@@ -172,11 +172,11 @@ export async function getRekapLinkByClient(
   } else if (periode === 'mingguan') {
     if (tanggal) {
       params.push(tanggal);
-      dateFilterPost = "date_trunc('week', p.created_at) = date_trunc('week', $2::date)";
-      dateFilterReport = "date_trunc('week', r.created_at) = date_trunc('week', $2::date)";
+      dateFilterPost = "date_trunc('week', p.created_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('week', ($2::timestamp AT TIME ZONE 'Asia/Jakarta'))";
+      dateFilterReport = "date_trunc('week', r.created_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('week', ($2::timestamp AT TIME ZONE 'Asia/Jakarta'))";
     } else {
-      dateFilterPost = "date_trunc('week', p.created_at) = date_trunc('week', NOW())";
-      dateFilterReport = "date_trunc('week', r.created_at) = date_trunc('week', NOW())";
+      dateFilterPost = "date_trunc('week', p.created_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('week', NOW() AT TIME ZONE 'Asia/Jakarta')";
+      dateFilterReport = "date_trunc('week', r.created_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('week', NOW() AT TIME ZONE 'Asia/Jakarta')";
     }
   } else if (periode === 'bulanan') {
     if (tanggal) {
