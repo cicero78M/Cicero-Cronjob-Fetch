@@ -2,6 +2,7 @@ import { mkdir } from 'fs/promises';
 import path from 'path';
 import XLSX from 'xlsx';
 import { getRekapKomentarByClient } from '../model/tiktokCommentModel.js';
+import { formatJakartaDate, formatJakartaTime } from '../utils/jakartaDateTime.js';
 
 const MONTH_NAMES_ID = [
   'Januari',
@@ -177,8 +178,8 @@ export async function generateTiktokAllDataRecap({
   const now = new Date();
   const exportDir = path.resolve('export_data/dirrequest');
   await mkdir(exportDir, { recursive: true });
-  const tanggal = now.toLocaleDateString('id-ID');
-  const jam = now.toLocaleTimeString('id-ID', { hour12: false });
+  const tanggal = formatJakartaDate(now, 'id-ID');
+  const jam = formatJakartaTime(now, 'id-ID', { hour12: false });
   const dateSafe = tanggal.replace(/\//g, '-');
   const timeSafe = jam.replace(/[:.]/g, '-');
   const clientLabel = formatClientLabel(clientName, clientId);

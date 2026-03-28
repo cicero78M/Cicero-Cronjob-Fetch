@@ -6,6 +6,7 @@ import {
   getPositionIndex, 
   getRankIndex 
 } from "../utils/sortingHelper.js";
+import { formatJakartaDate, getJakartaNowParts } from "../utils/jakartaDateTime.js";
 
 const DITBINMAS_CLIENT_ID = "DITBINMAS";
 const TARGET_ROLE = "ditbinmas";
@@ -18,14 +19,15 @@ const STATUS_SECTIONS = [
 ];
 
 function toDateInput(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
+  const parts = getJakartaNowParts(date);
+  const year = parts.year;
+  const month = String(parts.month).padStart(2, "0");
+  const day = String(parts.day).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
 function formatDateLong(date) {
-  return date.toLocaleDateString("id-ID", {
+  return formatJakartaDate(date, "id-ID", {
     day: "2-digit",
     month: "long",
     year: "numeric",
@@ -33,13 +35,13 @@ function formatDateLong(date) {
 }
 
 function formatDayLabel(date) {
-  const weekday = date.toLocaleDateString("id-ID", { weekday: "long" });
+  const weekday = formatJakartaDate(date, "id-ID", { weekday: "long" });
   return `${weekday}, ${formatDateLong(date)}`;
 }
 
 function resolveWeeklyRange(baseDate = new Date()) {
   const date = new Date(baseDate.getTime());
-  const day = date.getDay(); // 0=Sunday
+  const day = getJakartaNowParts(date).weekday; // 0=Sunday
   const mondayDiff = day === 0 ? -6 : 1 - day;
   const monday = new Date(date.getTime());
   monday.setDate(date.getDate() + mondayDiff);
@@ -66,14 +68,14 @@ export function describeKasatBinmasLikesPeriod(period = "daily", referenceDate) 
     };
   }
   if (period === "monthly") {
-    const label = today.toLocaleDateString("id-ID", {
+    const label = formatJakartaDate(today, "id-ID", {
       month: "long",
       year: "numeric",
     });
     return {
       type: "bulanan",
       label: `Bulan ${label}`,
-      tanggal: `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(
+      tanggal: `${getJakartaNowParts(today).year}-${String(getJakartaNowParts(today).month).padStart(
         2,
         "0"
       )}`,

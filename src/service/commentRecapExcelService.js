@@ -2,6 +2,7 @@ import { mkdir } from 'fs/promises';
 import path from 'path';
 import XLSX from 'xlsx';
 import { hariIndo } from '../utils/constants.js';
+import { formatJakartaDate, formatJakartaTime, getJakartaNowParts } from '../utils/jakartaDateTime.js';
 
 function formatClientName(clientId = '') {
   return clientId
@@ -31,9 +32,10 @@ function buildColumnWidths(headers, rows) {
 function buildExportPath(prefix, clientId) {
   const exportDir = path.resolve('export_data/comment_recap');
   const now = new Date();
-  const hari = hariIndo[now.getDay()];
-  const tanggal = now.toLocaleDateString('id-ID');
-  const jam = now.toLocaleTimeString('id-ID', { hour12: false });
+  const nowParts = getJakartaNowParts(now);
+  const hari = hariIndo[nowParts.weekday];
+  const tanggal = formatJakartaDate(now, 'id-ID');
+  const jam = formatJakartaTime(now, 'id-ID', { hour12: false });
   const dateSafe = tanggal.replace(/\//g, '-');
   const timeSafe = jam.replace(/[:.]/g, '-');
   const formattedClient = formatClientName(clientId);

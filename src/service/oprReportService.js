@@ -3,6 +3,7 @@
 import { query } from '../repository/db.js';
 import { hariIndo } from '../utils/constants.js';
 import { getGreeting } from '../utils/utilsHelper.js';
+import { formatJakartaDate, formatJakartaTime, getJakartaNowParts } from '../utils/jakartaDateTime.js';
 
 /**
  * Get operator user IDs for a client
@@ -70,9 +71,10 @@ export async function generateDailyAmplificationReport(clientId) {
     list.youtube.length;
   
   const now = new Date();
-  const hari = hariIndo[now.getDay()];
-  const tanggal = now.toLocaleDateString('id-ID');
-  const jam = now.toLocaleTimeString('id-ID', { hour12: false });
+  const nowParts = getJakartaNowParts(now);
+  const hari = hariIndo[nowParts.weekday];
+  const tanggal = formatJakartaDate(now, 'id-ID');
+  const jam = formatJakartaTime(now, 'id-ID', { hour12: false });
   const salam = getGreeting();
   
   const { rows: nameRows } = await query(
@@ -162,9 +164,10 @@ export async function generateYesterdayAmplificationReport(clientId) {
   const now = new Date();
   const yesterday = new Date();
   yesterday.setDate(now.getDate() - 1);
-  const hari = hariIndo[yesterday.getDay()];
-  const tanggal = yesterday.toLocaleDateString('id-ID');
-  const jam = now.toLocaleTimeString('id-ID', { hour12: false });
+  const yesterdayParts = getJakartaNowParts(yesterday);
+  const hari = hariIndo[yesterdayParts.weekday];
+  const tanggal = formatJakartaDate(yesterday, 'id-ID');
+  const jam = formatJakartaTime(now, 'id-ID', { hour12: false });
   const salam = getGreeting();
   
   const { rows: nameRows } = await query(

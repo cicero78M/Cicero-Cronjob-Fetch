@@ -2,6 +2,7 @@ import { mkdir } from 'fs/promises';
 import path from 'path';
 import XLSX from 'xlsx';
 import { hariIndo } from '../utils/constants.js';
+import { formatJakartaDate, formatJakartaTime, getJakartaNowParts } from '../utils/jakartaDateTime.js';
 import { getNamaPriorityIndex } from '../utils/sqlPriority.js';
 import { getRekapKomentarByClient } from '../model/tiktokCommentModel.js';
 import { countPostsByClient } from '../model/tiktokPostModel.js';
@@ -354,9 +355,10 @@ export async function saveWeeklyCommentRecapExcel(clientId, { regionalId } = {})
     ? new Date(dateList[dateList.length - 1])
     : new Date(weekEnd);
   const now = new Date();
-  const hari = hariIndo[fileDate.getDay()];
-  const tanggal = fileDate.toLocaleDateString('id-ID');
-  const jam = now.toLocaleTimeString('id-ID', { hour12: false });
+  const fileDateParts = getJakartaNowParts(fileDate);
+  const hari = hariIndo[fileDateParts.weekday];
+  const tanggal = formatJakartaDate(fileDate, 'id-ID');
+  const jam = formatJakartaTime(now, 'id-ID', { hour12: false });
   const dateSafe = tanggal.replace(/\//g, '-');
   const timeSafe = jam.replace(/[:.]/g, '-');
   const formattedClient = (clientId || '')
