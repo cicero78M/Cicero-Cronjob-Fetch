@@ -9,6 +9,7 @@ import dotenv from 'dotenv';
 import qrcode from 'qrcode-terminal';
 import { createBaileysClient } from './baileysAdapter.js';
 import { getAdminWhatsAppList } from '../utils/waHelper.js';
+import { formatJakartaIsoTimestamp } from '../utils/jakartaDateTime.js';
 
 dotenv.config();
 
@@ -207,7 +208,7 @@ export async function sendTelegramMessage(message, options = {}) {
  * @returns {Promise<boolean>} Success status
  */
 export async function sendTelegramLog(level, message) {
-  const timestamp = new Date().toISOString();
+  const timestamp = formatJakartaIsoTimestamp() || new Date().toISOString();
   
   // Map log levels to emojis
   const emojiMap = {

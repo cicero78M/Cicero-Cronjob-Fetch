@@ -1,4 +1,5 @@
 const JAKARTA_TIME_ZONE = 'Asia/Jakarta';
+const JAKARTA_UTC_OFFSET = '+07:00';
 
 const JAKARTA_PARTS_FORMATTER = new Intl.DateTimeFormat('en-US', {
   timeZone: JAKARTA_TIME_ZONE,
@@ -24,6 +25,18 @@ const WEEKDAY_TO_INDEX = {
 
 function toDate(value = new Date()) {
   return value instanceof Date ? value : new Date(value ?? Date.now());
+}
+
+export function formatJakartaIsoTimestamp(baseDate = new Date()) {
+  const date = toDate(baseDate);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const parts = getJakartaNowParts(date);
+  const milliseconds = String(date.getMilliseconds()).padStart(3, '0');
+
+  return `${String(parts.year).padStart(4, '0')}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}T${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}:${String(parts.second).padStart(2, '0')}.${milliseconds}${JAKARTA_UTC_OFFSET}`;
 }
 
 export function getJakartaNowParts(baseDate = new Date()) {
@@ -73,4 +86,4 @@ export function formatJakartaTime(baseDate = new Date(), locale = 'id-ID', optio
   });
 }
 
-export { JAKARTA_TIME_ZONE };
+export { JAKARTA_TIME_ZONE, JAKARTA_UTC_OFFSET };
