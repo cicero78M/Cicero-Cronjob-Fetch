@@ -297,11 +297,11 @@ export async function getPostsByFilters(
   }
 
   const addDateFilter = (addParamFn) => {
-    let filter = "p.created_at::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date";
+    let filter = "(p.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date";
     if (startDate && endDate) {
       const startIdx = addParamFn(startDate);
       const endIdx = addParamFn(endDate);
-      filter = `p.created_at::date BETWEEN ${startIdx}::date AND ${endIdx}::date`;
+      filter = `(p.created_at AT TIME ZONE 'Asia/Jakarta')::date BETWEEN ${startIdx}::date AND ${endIdx}::date`;
     } else if (periode === 'semua') {
       filter = '1=1';
     } else if (periode === 'mingguan') {
@@ -323,7 +323,7 @@ export async function getPostsByFilters(
       }
     } else if (tanggal) {
       const tanggalIdx = addParamFn(tanggal);
-      filter = `p.created_at::date = ${tanggalIdx}::date`;
+      filter = `(p.created_at AT TIME ZONE 'Asia/Jakarta')::date = ${tanggalIdx}::date`;
     }
     return filter;
   };
@@ -433,11 +433,11 @@ export async function countPostsByClient(
       : normalizedClientId;
 
   const addDateFilter = (addParamFn) => {
-    let filter = "p.created_at::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date";
+    let filter = "(p.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date";
     if (start_date && end_date) {
       const startIdx = addParamFn(start_date);
       const endIdx = addParamFn(end_date);
-      filter = `p.created_at::date BETWEEN ${startIdx}::date AND ${endIdx}::date`;
+      filter = `(p.created_at AT TIME ZONE 'Asia/Jakarta')::date BETWEEN ${startIdx}::date AND ${endIdx}::date`;
     } else if (periode === 'semua') {
       filter = '1=1';
     } else if (periode === 'mingguan') {
@@ -459,7 +459,7 @@ export async function countPostsByClient(
       }
     } else if (tanggal) {
       const tanggalIdx = addParamFn(tanggal);
-      filter = `p.created_at::date = ${tanggalIdx}::date`;
+      filter = `(p.created_at AT TIME ZONE 'Asia/Jakarta')::date = ${tanggalIdx}::date`;
     }
     return filter;
   };

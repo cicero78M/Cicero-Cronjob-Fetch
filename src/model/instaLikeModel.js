@@ -316,7 +316,7 @@ export async function getRekapLikesByClient(
 
   const buildTanggalFilter = addParamFn => {
     let filter =
-      "p.created_at::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date";
+      "(p.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date";
     if (start_date && end_date) {
       const startIdx = addParamFn(start_date);
       const endIdx = addParamFn(end_date);
@@ -344,7 +344,7 @@ export async function getRekapLikesByClient(
       filter = '1=1';
     } else if (tanggal) {
       const idx = addParamFn(tanggal);
-      filter = `p.created_at::date = $${idx}::date`;
+      filter = `(p.created_at AT TIME ZONE 'Asia/Jakarta')::date = $${idx}::date`;
     }
     return filter;
   };
