@@ -1,7 +1,13 @@
-const JAKARTA_TIME_ZONE = 'Asia/Jakarta';
+import {
+  JAKARTA_TIMEZONE,
+  getJakartaNow,
+  formatJakartaDate,
+  formatJakartaTime,
+  toJakartaDateKey,
+} from "./jakartaTime.js";
 
 const JAKARTA_PARTS_FORMATTER = new Intl.DateTimeFormat('en-US', {
-  timeZone: JAKARTA_TIME_ZONE,
+  timeZone: JAKARTA_TIMEZONE,
   weekday: 'short',
   year: 'numeric',
   month: '2-digit',
@@ -26,7 +32,7 @@ function toDate(value = new Date()) {
   return value instanceof Date ? value : new Date(value ?? Date.now());
 }
 
-export function getJakartaNowParts(baseDate = new Date()) {
+export function getJakartaNowParts(baseDate = getJakartaNow()) {
   const date = toDate(baseDate);
   if (Number.isNaN(date.getTime())) {
     return {
@@ -59,18 +65,13 @@ export function getJakartaNowParts(baseDate = new Date()) {
   };
 }
 
-export function formatJakartaDate(baseDate = new Date(), locale = 'id-ID', options = {}) {
-  return toDate(baseDate).toLocaleDateString(locale, {
-    timeZone: JAKARTA_TIME_ZONE,
-    ...options,
-  });
-}
+const JAKARTA_TIME_ZONE = JAKARTA_TIMEZONE;
 
-export function formatJakartaTime(baseDate = new Date(), locale = 'id-ID', options = {}) {
-  return toDate(baseDate).toLocaleTimeString(locale, {
-    timeZone: JAKARTA_TIME_ZONE,
-    ...options,
-  });
-}
-
-export { JAKARTA_TIME_ZONE };
+export {
+  JAKARTA_TIME_ZONE,
+  JAKARTA_TIMEZONE,
+  getJakartaNow,
+  formatJakartaDate,
+  formatJakartaTime,
+  toJakartaDateKey,
+};

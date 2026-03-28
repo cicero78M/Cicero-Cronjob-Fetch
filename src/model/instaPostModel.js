@@ -1,5 +1,13 @@
 // src/model/instaPostModel.js
 import { query } from '../repository/db.js';
+import { JAKARTA_TIMEZONE, getJakartaNow, toJakartaDateKey } from '../utils/jakartaTime.js';
+
+const JAKARTA_SQL_TIMEZONE = `'${JAKARTA_TIMEZONE}'`;
+const TODAY_JAKARTA_SQL_DATE = `(NOW() AT TIME ZONE ${JAKARTA_SQL_TIMEZONE})::date`;
+
+function asJakartaDate(columnName) {
+  return `(${columnName} AT TIME ZONE ${JAKARTA_SQL_TIMEZONE})::date`;
+}
 
 export async function upsertInstaPost(data) {
   // Pastikan field yang dipakai sesuai dengan kolom di DB
@@ -45,9 +53,7 @@ export async function findPostByShortcode(shortcode) {
 }
 
 export async function getShortcodesTodayByClient(identifier) {
-  const today = new Date().toLocaleDateString('en-CA', {
-    timeZone: 'Asia/Jakarta'
-  });
+  const today = toJakartaDateKey(getJakartaNow());
 
   const typeRes = await query(
     'SELECT client_type FROM clients WHERE LOWER(client_id) = LOWER($1)',
@@ -69,13 +75,13 @@ export async function getShortcodesTodayByClient(identifier) {
       `SELECT p.shortcode FROM insta_post p\n` +
       `JOIN insta_post_roles pr ON pr.shortcode = p.shortcode\n` +
       `WHERE LOWER(pr.role_name) = LOWER($1)\n` +
-      `  AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date\n` +
+      `  AND ${asJakartaDate('p.created_at')} = $2::date\n` +
       `ORDER BY p.created_at ASC, p.shortcode ASC`;
     params = [identifier, today];
   } else {
     sql =
       `SELECT shortcode FROM insta_post\n` +
-      `WHERE LOWER(client_id) = LOWER($1) AND (created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date\n` +
+      `WHERE LOWER(client_id) = LOWER($1) AND ${asJakartaDate('created_at')} = $2::date\n` +
       `ORDER BY created_at ASC, shortcode ASC`;
     params = [identifier, today];
   }
@@ -85,7 +91,7 @@ export async function getShortcodesTodayByClient(identifier) {
   if (useRoleFilter && clientType === 'direktorat' && rows.length === 0) {
     const fallbackQuery =
       `SELECT shortcode FROM insta_post\n` +
-      `WHERE LOWER(client_id) = LOWER($1) AND (created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date\n` +
+      `WHERE LOWER(client_id) = LOWER($1) AND ${asJakartaDate('created_at')} = $2::date\n` +
       `ORDER BY created_at ASC, shortcode ASC`;
     rows = (await query(fallbackQuery, [identifier, today])).rows;
   }
@@ -94,11 +100,9 @@ export async function getShortcodesTodayByClient(identifier) {
 }
 
 export async function getShortcodesYesterdayByClient(identifier) {
-  const date = new Date();
+  const date = getJakartaNow();
   date.setDate(date.getDate() - 1);
-  const yesterday = date.toLocaleDateString('en-CA', {
-    timeZone: 'Asia/Jakarta'
-  });
+  const yesterday = toJakartaDateKey(date);
 
   const typeRes = await query(
     'SELECT client_type FROM clients WHERE LOWER(client_id) = LOWER($1)',
@@ -119,12 +123,12 @@ export async function getShortcodesYesterdayByClient(identifier) {
       `SELECT p.shortcode FROM insta_post p\n` +
       `JOIN insta_post_roles pr ON pr.shortcode = p.shortcode\n` +
       `WHERE LOWER(pr.role_name) = LOWER($1)\n` +
-      `  AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date`;
+      `  AND ${asJakartaDate('p.created_at')} = $2::date`;
     params = [identifier, yesterday];
   } else {
     sql =
       `SELECT shortcode FROM insta_post\n` +
-      `WHERE LOWER(client_id) = LOWER($1) AND (created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date`;
+      `WHERE LOWER(client_id) = LOWER($1) AND ${asJakartaDate('created_at')} = $2::date`;
     params = [identifier, yesterday];
   }
 
@@ -143,12 +147,8 @@ export async function getShortcodesByDateRange(identifier, startDate, endDate) {
     return [];
   }
 
-  const startStr = start.toLocaleDateString('en-CA', {
-    timeZone: 'Asia/Jakarta'
-  });
-  const endStr = end.toLocaleDateString('en-CA', {
-    timeZone: 'Asia/Jakarta'
-  });
+  const startStr = toJakartaDateKey(start);
+  const endStr = toJakartaDateKey(end);
 
   const [startBound, endBound] = startStr <= endStr ? [startStr, endStr] : [endStr, startStr];
 
@@ -171,13 +171,13 @@ export async function getShortcodesByDateRange(identifier, startDate, endDate) {
       `SELECT p.shortcode FROM insta_post p\n` +
       `JOIN insta_post_roles pr ON pr.shortcode = p.shortcode\n` +
       `WHERE LOWER(pr.role_name) = LOWER($1)\n` +
-      `  AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date BETWEEN $2::date AND $3::date`;
+      `  AND ${asJakartaDate('p.created_at')} BETWEEN $2::date AND $3::date`;
     params = [identifier, startBound, endBound];
   } else {
     sql =
       `SELECT shortcode FROM insta_post\n` +
       `WHERE LOWER(client_id) = LOWER($1)\n` +
-      `  AND (created_at AT TIME ZONE 'Asia/Jakarta')::date BETWEEN $2::date AND $3::date`;
+      `  AND ${asJakartaDate('created_at')} BETWEEN $2::date AND $3::date`;
     params = [identifier, startBound, endBound];
   }
 
@@ -187,14 +187,11 @@ export async function getShortcodesByDateRange(identifier, startDate, endDate) {
 
 export async function getShortcodesTodayByUsername(username) {
   if (!username) return [];
-  const today = new Date();
-  const yyyy = today.getFullYear();
-  const mm = String(today.getMonth() + 1).padStart(2, '0');
-  const dd = String(today.getDate()).padStart(2, '0');
+  const todayKey = toJakartaDateKey(getJakartaNow());
   const res = await query(
     `SELECT p.shortcode FROM insta_post p JOIN clients c ON c.client_id = p.client_id
-     WHERE c.client_insta = $1 AND DATE(p.created_at) = $2`,
-    [username, `${yyyy}-${mm}-${dd}`]
+     WHERE c.client_insta = $1 AND ${asJakartaDate('p.created_at')} = $2::date`,
+    [username, todayKey]
   );
   return res.rows.map(r => r.shortcode);
 }
@@ -211,7 +208,7 @@ export async function getPostsTodayByClient(client_id) {
      JOIN insta_post_clients pc ON pc.shortcode = p.shortcode
      LEFT JOIN insta_like il ON il.shortcode = p.shortcode
      WHERE LOWER(pc.client_id) = LOWER($1)
-       AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date
+       AND ${asJakartaDate('p.created_at')} = ${TODAY_JAKARTA_SQL_DATE}
      ORDER BY p.created_at ASC`,
     [client_id]
   );
@@ -235,11 +232,11 @@ export async function getTaskListPostsByClient(client_id) {
       LEFT JOIN insta_like il ON il.shortcode = p.shortcode
       WHERE (
         LOWER(TRIM(pc.client_id)) = $1
-        AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date
+        AND ${asJakartaDate('p.created_at')} = ${TODAY_JAKARTA_SQL_DATE}
       )
       OR (
         LOWER(TRIM(p.client_id)) = $1
-        AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date
+        AND ${asJakartaDate('p.created_at')} = ${TODAY_JAKARTA_SQL_DATE}
       )
       ORDER BY p.shortcode, p.created_at DESC
     )

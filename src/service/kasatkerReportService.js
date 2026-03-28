@@ -1,4 +1,5 @@
 import { collectEngagementRanking } from './engagementRankingExcelService.js';
+import { formatJakartaDate, formatJakartaTime, getJakartaNow } from '../utils/jakartaTime.js';
 
 const CATEGORY_RULES = [
   { key: 'aktif', label: '\n*KEPATUHAN AKTIF*', threshold: 90 },
@@ -107,13 +108,13 @@ export async function generateKasatkerReport({
 
   const sections = buildCategorySections(grouped);
 
-  const now = new Date();
-  const tanggal = now.toLocaleDateString('id-ID', {
+  const now = getJakartaNow();
+  const tanggal = formatJakartaDate(now, 'id-ID', {
     day: '2-digit',
     month: 'long',
     year: 'numeric',
   });
-  const jam = now.toLocaleTimeString('id-ID', {
+  const jam = formatJakartaTime(now, 'id-ID', {
     hour: '2-digit',
     minute: '2-digit',
   });
