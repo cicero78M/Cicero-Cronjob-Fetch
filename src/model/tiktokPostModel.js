@@ -284,7 +284,7 @@ export async function countPostsByClient(
     } else if (periode === 'mingguan') {
       if (tanggal) {
         const tanggalIdx = addParamFn(tanggal);
-        filter = `date_trunc('week', ${jakartaColumn}) = date_trunc('week', ${tanggalIdx}::date)`;
+        filter = `date_trunc('week', ${jakartaColumn}) = date_trunc('week', (${tanggalIdx}::timestamp AT TIME ZONE 'Asia/Jakarta'))`;
       } else {
         filter = `date_trunc('week', ${jakartaColumn}) = date_trunc('week', ${nowJakarta})`;
       }
