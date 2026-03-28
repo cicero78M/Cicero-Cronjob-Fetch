@@ -1,5 +1,8 @@
 import { query } from '../repository/db.js';
-import { formatIsoTimestamp, formatDdMmYyyy } from '../utils/utilsHelper.js';
+import {
+  parseJakartaLocalToIsoUtc,
+  formatDdMmYyyy,
+} from '../utils/utilsHelper.js';
 
 export async function getEvents(userId) {
   const res = await query(
@@ -23,7 +26,7 @@ export async function findEventById(id) {
 }
 
 export async function createEvent(data) {
-  const eventDate = formatIsoTimestamp(data.event_date);
+  const eventDate = parseJakartaLocalToIsoUtc(data.event_date);
   const res = await query(
     `INSERT INTO editorial_event (
       event_date, topic, judul_berita, assignee, status, content, summary, image_path,
@@ -55,7 +58,7 @@ export async function updateEvent(id, data) {
   const old = await findEventById(id);
   if (!old) return null;
   const merged = { ...old, ...data };
-  merged.event_date = formatIsoTimestamp(merged.event_date);
+  merged.event_date = parseJakartaLocalToIsoUtc(merged.event_date);
   const res = await query(
     `UPDATE editorial_event SET
       event_date=$2,

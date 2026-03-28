@@ -444,37 +444,91 @@ export function formatDdMmYyyy(value) {
   return `${day}/${month}/${year}`;
 }
 
-export function formatIsoTimestamp(value) {
+const JAKARTA_UTC_OFFSET_HOURS = 7;
+
+/**
+ * Parse tanggal/jam lokal Asia/Jakarta (WIB) menjadi ISO UTC.
+ * Kontrak:
+ * - Input TANPA timezone (contoh `2026-03-28 08:30`) dianggap sebagai WIB.
+ * - Input DENGAN timezone eksplisit (`Z`, `+07:00`, dst) dipertahankan sesuai offset input.
+ * - Return selalu string ISO UTC (`...Z`) untuk disimpan ke DB.
+ */
+export function parseJakartaLocalToIsoUtc(value) {
   if (!value) return null;
-  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+
   const str = String(value).trim();
+  if (!str) return null;
+
   // dd/mm/yyyy or dd-mm-yyyy optionally with time HH:MM
-  let match = str.match(/^(\d{2})[-/](\d{2})[-/](\d{4})(?:[ T](\d{2}):(\d{2}))?$/);
+  let match = str.match(
+    /^(\d{2})[-/](\d{2})[-/](\d{4})(?:[ T](\d{2}):(\d{2}))?$/
+  );
   if (match) {
-    const [, d, m, y, hh = '00', mm = '00'] = match;
-    return `${y}-${m}-${d}T${hh}:${mm}:00Z`;
+    const [, d, m, y, hh = "00", mm = "00"] = match;
+    const utcMs = Date.UTC(
+      Number(y),
+      Number(m) - 1,
+      Number(d),
+      Number(hh) - JAKARTA_UTC_OFFSET_HOURS,
+      Number(mm),
+      0
+    );
+    return new Date(utcMs).toISOString();
   }
+
   // yyyy-mm-dd or yyyy/mm/dd optionally with time
-  match = str.match(/^(\d{4})[-/](\d{2})[-/](\d{2})(?:[ T](\d{2}):(\d{2}))?$/);
+  match = str.match(
+    /^(\d{4})[-/](\d{2})[-/](\d{2})(?:[ T](\d{2}):(\d{2}))?$/
+  );
   if (match) {
-    const [, y, m, d, hh = '00', mm = '00'] = match;
-    return `${y}-${m}-${d}T${hh}:${mm}:00Z`;
+    const [, y, m, d, hh = "00", mm = "00"] = match;
+    const utcMs = Date.UTC(
+      Number(y),
+      Number(m) - 1,
+      Number(d),
+      Number(hh) - JAKARTA_UTC_OFFSET_HOURS,
+      Number(mm),
+      0
+    );
+    return new Date(utcMs).toISOString();
   }
-  const d = new Date(str);
-  if (!Number.isNaN(d)) return d.toISOString();
+
+  const parsed = new Date(str);
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
   return null;
 }
 
+/**
+ * Kontrak parsing:
+ * - Input tanpa timezone ditafsirkan sebagai Asia/Jakarta (WIB).
+ * - Hasil selalu ISO UTC (`...Z`) agar aman untuk persistensi.
+ */
+export function formatIsoTimestamp(value) {
+  return parseJakartaLocalToIsoUtc(value);
+}
+
+/**
+ * Kontrak parsing:
+ * - Input tanpa timezone ditafsirkan sebagai Asia/Jakarta (WIB).
+ * - Return berupa tanggal `YYYY-MM-DD` (date-only) dalam konteks WIB.
+ */
 export function formatIsoDate(value) {
   if (!value) return null;
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
   const str = String(value).trim();
   let match = str.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
   if (match) return `${match[3]}-${match[2]}-${match[1]}`;
   match = str.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/);
   if (match) return `${match[1]}-${match[2]}-${match[3]}`;
-  const d = new Date(str);
-  if (!Number.isNaN(d)) return d.toISOString().slice(0, 10);
+
+  const isoUtc = parseJakartaLocalToIsoUtc(value);
+  if (!isoUtc) return null;
+  const jakartaDate = new Date(isoUtc).toLocaleDateString("en-CA", {
+    timeZone: "Asia/Jakarta",
+  });
+  if (jakartaDate) return jakartaDate;
   return null;
 }
 
