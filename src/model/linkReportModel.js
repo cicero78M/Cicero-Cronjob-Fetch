@@ -171,8 +171,8 @@ export async function getReportsTodayByClient(client_id) {
   }
   const res = await query(
     `SELECT r.* FROM link_report r ${joinClause}
-     WHERE ${whereClause} AND r.created_at::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date
-       AND p.created_at::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date
+     WHERE ${whereClause} AND (r.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date
+       AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date
      ORDER BY r.created_at ASC`,
     [client_id]
   );
@@ -195,8 +195,8 @@ export async function getReportsYesterdayByClient(client_id) {
   }
   const res = await query(
     `SELECT r.* FROM link_report r ${joinClause}
-     WHERE ${whereClause} AND r.created_at::date = (NOW() AT TIME ZONE 'Asia/Jakarta' - INTERVAL '1 day')::date
-       AND p.created_at::date = (NOW() AT TIME ZONE 'Asia/Jakarta' - INTERVAL '1 day')::date
+     WHERE ${whereClause} AND (r.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta' - INTERVAL '1 day')::date
+       AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta' - INTERVAL '1 day')::date
      ORDER BY r.created_at ASC`,
     [client_id]
   );
@@ -219,7 +219,7 @@ export async function getReportsTodayByShortcode(client_id, shortcode) {
   const res = await query(
     `SELECT r.* FROM link_report r ${joinClause}
      WHERE ${whereClause} AND r.shortcode = $2
-       AND r.created_at::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date
+       AND (r.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date
      ORDER BY r.created_at ASC`,
     [client_id, shortcode]
   );
@@ -291,8 +291,8 @@ export async function getRekapLinkByClient(
     String(resolvedUserRole).toLowerCase() === String(resolvedPostRoleName).toLowerCase();
   const sharedRoleParamIdx = hasSharedRoleParam ? addParam(resolvedUserRole) : null;
 
-  let dateFilterPost = "p.created_at::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date";
-  let dateFilterReport = "r.created_at::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date";
+  let dateFilterPost = "(p.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date";
+  let dateFilterReport = "(r.created_at AT TIME ZONE 'Asia/Jakarta')::date = (NOW() AT TIME ZONE 'Asia/Jakarta')::date";
   if (start_date && end_date) {
     const startIdx = addParam(start_date);
     const endIdx = addParam(end_date);
