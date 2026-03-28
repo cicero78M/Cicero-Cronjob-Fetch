@@ -45,6 +45,7 @@ import {
 } from "./kasatBinmasTiktokCommentRecapService.js";
 import { hariIndo } from "../utils/constants.js";
 import { fetchInstagramInfo } from "./instaRapidService.js";
+import { formatJakartaDate, formatJakartaTime } from "../utils/jakartaDateTime.js";
 import {
   buildSatbinmasOfficialInstagramRecap,
   buildSatbinmasOfficialTiktokRecap,
@@ -128,13 +129,13 @@ export async function formatRekapUserData(clientId, roleFlag = null) {
   const users = await getUsersSocialByClient(clientId, filterRole);
   const salam = getGreeting();
   const now = new Date();
-  const hari = now.toLocaleDateString("id-ID", { weekday: "long" });
-  const tanggal = now.toLocaleDateString("id-ID", {
+  const hari = formatJakartaDate(now, "id-ID", { weekday: "long" });
+  const tanggal = formatJakartaDate(now, "id-ID", {
     day: "2-digit",
     month: "long",
     year: "numeric",
   });
-  const jam = now.toLocaleTimeString("id-ID", {
+  const jam = formatJakartaTime(now, "id-ID", {
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -368,13 +369,13 @@ export async function formatRekapBelumLengkapDirektorat(clientId) {
 
   const salam = getGreeting();
   const now = new Date();
-  const hari = now.toLocaleDateString("id-ID", { weekday: "long" });
-  const tanggal = now.toLocaleDateString("id-ID", {
+  const hari = formatJakartaDate(now, "id-ID", { weekday: "long" });
+  const tanggal = formatJakartaDate(now, "id-ID", {
     day: "2-digit",
     month: "long",
     year: "numeric",
   });
-  const jam = now.toLocaleTimeString("id-ID", {
+  const jam = formatJakartaTime(now, "id-ID", {
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -493,12 +494,12 @@ export async function formatExecutiveSummary(clientId, roleFlag = null) {
   const projectedIg = ((totals.insta + 0.7 * top10IgCount) / totals.total) * 100;
   const projectedTt = ((totals.tiktok + 0.7 * top10TtCount) / totals.total) * 100;
   const now = new Date();
-  const dateStr = now.toLocaleDateString("id-ID", {
+  const dateStr = formatJakartaDate(now, "id-ID", {
     day: "numeric",
     month: "short",
     year: "numeric",
   });
-  const timeStr = now.toLocaleTimeString("id-ID", {
+  const timeStr = formatJakartaTime(now, "id-ID", {
     hour: "2-digit",
     minute: "2-digit",
   });

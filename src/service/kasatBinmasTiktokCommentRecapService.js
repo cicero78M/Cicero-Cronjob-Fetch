@@ -8,10 +8,10 @@ import {
   extractUsernamesFromComments,
   normalizeUsername,
 } from "../handler/fetchabsensi/tiktok/absensiKomentarTiktok.js";
+import { formatJakartaDate, getJakartaNowParts, JAKARTA_TIME_ZONE } from "../utils/jakartaDateTime.js";
 
 const DITBINMAS_CLIENT_ID = "DITBINMAS";
 const TARGET_ROLE = "ditbinmas";
-const JAKARTA_TIMEZONE = "Asia/Jakarta";
 
 const STATUS_SECTIONS = [
   { key: "lengkap", icon: "✅", label: "Lengkap (sesuai target)" },
@@ -43,7 +43,7 @@ function rankWeight(rank) {
   return idx === -1 ? PANGKAT_ORDER.length : idx;
 }
 
-function toZonedDate(baseDate = new Date(), timeZone = JAKARTA_TIMEZONE) {
+function toZonedDate(baseDate = new Date(), timeZone = JAKARTA_TIME_ZONE) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
     year: "numeric",
@@ -73,7 +73,7 @@ function toZonedDate(baseDate = new Date(), timeZone = JAKARTA_TIMEZONE) {
 }
 
 function toJakartaDate(baseDate = new Date()) {
-  return toZonedDate(baseDate, JAKARTA_TIMEZONE);
+  return toZonedDate(baseDate, JAKARTA_TIME_ZONE);
 }
 
 export function resolveBaseDate(referenceDate) {
@@ -105,8 +105,7 @@ function toDateInput(date) {
 
 function formatDateLong(date) {
   const jakartaDate = date instanceof Date ? date : toJakartaDate(date);
-  return jakartaDate.toLocaleDateString("id-ID", {
-    timeZone: "UTC",
+  return formatJakartaDate(jakartaDate, "id-ID", {
     day: "2-digit",
     month: "long",
     year: "numeric",
@@ -115,9 +114,8 @@ function formatDateLong(date) {
 
 function formatDayLabel(date) {
   const jakartaDate = date instanceof Date ? date : toJakartaDate(date);
-  const weekday = jakartaDate.toLocaleDateString("id-ID", {
+  const weekday = formatJakartaDate(jakartaDate, "id-ID", {
     weekday: "long",
-    timeZone: "UTC",
   });
   return `${weekday}, ${formatDateLong(jakartaDate)}`;
 }
@@ -150,8 +148,7 @@ function describePeriod(period = "daily", referenceDate) {
     };
   }
   if (period === "monthly") {
-    const label = today.toLocaleDateString("id-ID", {
-      timeZone: "UTC",
+    const label = formatJakartaDate(today, "id-ID", {
       month: "long",
       year: "numeric",
     });
@@ -159,7 +156,7 @@ function describePeriod(period = "daily", referenceDate) {
     return {
       periode: "bulanan",
       label: `Bulan ${label}`,
-      tanggal: `${zoned.getUTCFullYear()}-${String(zoned.getUTCMonth() + 1).padStart(2, "0")}`,
+      tanggal: `${getJakartaNowParts(zoned).year}-${String(getJakartaNowParts(zoned).month).padStart(2, "0")}`,
     };
   }
   return {

@@ -10,6 +10,7 @@ import { getPostsByClientAndDateRange } from "../model/tiktokPostModel.js";
 import { getCommentsByVideoId } from "../model/tiktokCommentModel.js";
 import { computeDitbinmasLikesStats } from "../handler/fetchabsensi/insta/ditbinmasLikesUtils.js";
 import { hariIndo } from "../utils/constants.js";
+import { formatJakartaDate, formatJakartaTime, getJakartaNowParts } from "../utils/jakartaDateTime.js";
 
 const EXPORT_DIR = path.resolve("export_data/engagement_ranking");
 const PERIOD_DESCRIPTIONS = {
@@ -41,10 +42,11 @@ function toDateKey(date) {
 }
 
 function formatDayDate(date) {
-  const hari = hariIndo[date.getDay()] || date.toLocaleDateString("id-ID", {
+  const dateParts = getJakartaNowParts(date);
+  const hari = hariIndo[dateParts.weekday] || formatJakartaDate(date, "id-ID", {
     weekday: "long",
   });
-  const tanggal = date.toLocaleDateString("id-ID", {
+  const tanggal = formatJakartaDate(date, "id-ID", {
     day: "2-digit",
     month: "long",
     year: "numeric",
@@ -53,7 +55,7 @@ function formatDayDate(date) {
 }
 
 function formatDateOnly(date) {
-  return date.toLocaleDateString("id-ID", {
+  return formatJakartaDate(date, "id-ID", {
     day: "2-digit",
     month: "long",
     year: "numeric",
@@ -67,10 +69,12 @@ function formatDateRangeText(startDate, endDate) {
 function getIsoWeekNumber(date) {
   const target = new Date(date.valueOf());
   target.setHours(0, 0, 0, 0);
-  target.setDate(target.getDate() + 3 - ((target.getDay() + 6) % 7));
+  const targetParts = getJakartaNowParts(target);
+  target.setDate(target.getDate() + 3 - ((targetParts.weekday + 6) % 7));
   const firstThursday = new Date(target.getFullYear(), 0, 4);
   firstThursday.setHours(0, 0, 0, 0);
-  firstThursday.setDate(firstThursday.getDate() + 3 - ((firstThursday.getDay() + 6) % 7));
+  const firstThursdayParts = getJakartaNowParts(firstThursday);
+  firstThursday.setDate(firstThursday.getDate() + 3 - ((firstThursdayParts.weekday + 6) % 7));
   const diff = target.getTime() - firstThursday.getTime();
   return 1 + Math.round(diff / (7 * 24 * 60 * 60 * 1000));
 }
@@ -123,7 +127,7 @@ function resolvePeriodRange(
       break;
     }
     case "this_week": {
-      const day = now.getDay();
+      const day = getJakartaNowParts(now).weekday;
       const diffToMonday = (day + 6) % 7;
       startDateObj.setDate(now.getDate() - diffToMonday);
       endDateObj = new Date(startDateObj);
@@ -135,7 +139,7 @@ function resolvePeriodRange(
       break;
     }
     case "last_week": {
-      const day = now.getDay();
+      const day = getJakartaNowParts(now).weekday;
       const diffToMonday = (day + 6) % 7;
       const thisWeekMonday = new Date(now);
       thisWeekMonday.setDate(now.getDate() - diffToMonday);
@@ -152,7 +156,7 @@ function resolvePeriodRange(
     case "this_month": {
       startDateObj = new Date(now.getFullYear(), now.getMonth(), 1);
       endDateObj = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      const monthLabel = startDateObj.toLocaleDateString("id-ID", {
+      const monthLabel = formatJakartaDate(startDateObj, "id-ID", {
         month: "long",
         year: "numeric",
       });
@@ -165,7 +169,7 @@ function resolvePeriodRange(
     case "last_month": {
       startDateObj = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       endDateObj = new Date(now.getFullYear(), now.getMonth(), 0);
-      const monthLabel = startDateObj.toLocaleDateString("id-ID", {
+      const monthLabel = formatJakartaDate(startDateObj, "id-ID", {
         month: "long",
         year: "numeric",
       });
@@ -478,15 +482,16 @@ export async function saveEngagementRankingExcel({
   });
 
   const now = new Date();
-  const hari = hariIndo[now.getDay()] || now.toLocaleDateString("id-ID", { weekday: "long" });
-  const tanggal = now.toLocaleDateString("id-ID", {
+  const nowParts = getJakartaNowParts(now);
+  const hari = hariIndo[nowParts.weekday] || formatJakartaDate(now, "id-ID", { weekday: "long" });
+  const tanggal = formatJakartaDate(now, "id-ID", {
     day: "2-digit",
     month: "long",
     year: "numeric",
   });
 
-  const jam = String(now.getHours()).padStart(2, "0");
-  const menit = String(now.getMinutes()).padStart(2, "0");
+  const jam = String(nowParts.hour).padStart(2, "0");
+  const menit = String(nowParts.minute).padStart(2, "0");
   const waktuPengambilan = `${jam}.${menit}`;
 
   const aoa = [
