@@ -42,6 +42,10 @@ function shouldClearAuthSession() {
   return process.env.WA_AUTH_CLEAR_SESSION_ON_REINIT === 'true';
 }
 
+function shouldResetAuthOnSignalError() {
+  return process.env.WA_SIGNAL_ERROR_RESET_AUTH_SESSION === 'true';
+}
+
 function shouldStrictSingleOwner() {
   return process.env.WA_BAILEYS_STRICT_SINGLE_OWNER === 'true';
 }
@@ -97,6 +101,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   const sessionPath = path.join(authBasePath, clientId);
   const sessionLockPath = path.join(sessionPath, SESSION_LOCK_FILE_NAME);
   const clearAuthSession = shouldClearAuthSession();
+  const resetAuthOnSignalError = shouldResetAuthOnSignalError();
   const strictSingleOwner = shouldStrictSingleOwner();
 
   // Create auth directory if it doesn't exist
@@ -469,7 +474,12 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             await reinitializeClient(
               'bad-mac-error-decryption',
               reason,
-              { clearAuthSessionOverride: true }
+              // A Bad MAC can be limited to one stale Signal session. Deleting the
+              // whole auth directory logs the device out and turns a recoverable
+              // delivery problem into a mandatory QR re-pair. Honour the explicit
+              // operator setting instead; destructive clearing remains available
+              // through WA_SIGNAL_ERROR_RESET_AUTH_SESSION=true.
+              { clearAuthSessionOverride: resetAuthOnSignalError }
             );
             consecutiveMacErrors = 0;
             lastMacErrorTime = 0;

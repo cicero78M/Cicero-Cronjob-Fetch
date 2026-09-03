@@ -38,6 +38,14 @@ function buildErrorMessage(error) {
   return String(error).slice(0, 800);
 }
 
+function isTransientClientReadinessError(errorMessage) {
+  const normalized = String(errorMessage || '').toLowerCase();
+  return normalized.includes('client not ready') ||
+    normalized.includes('not initialized') ||
+    normalized.includes('connection closed') ||
+    normalized.includes('timed out waiting');
+}
+
 function nextAttemptAtIso(attemptCount) {
   const delaySeconds = computeBackoffSeconds(attemptCount);
   return new Date(Date.now() + delaySeconds * 1000).toISOString();
@@ -76,7 +84,10 @@ export async function processWaOutboxBatch(batchSize = DEFAULT_BATCH_SIZE) {
       const maxAttempts = Number(row.max_attempts || 5);
       const attemptCount = Number(row.attempt_count || 1);
 
-      if (attemptCount >= maxAttempts) {
+      // An unavailable WhatsApp client is an infrastructure outage, not a bad
+      // notification. Keep the durable row retryable so it is delivered after
+      // reconnection instead of silently losing the scheduled report.
+      if (attemptCount >= maxAttempts && !isTransientClientReadinessError(errorMessage)) {
         await markOutboxDeadLetter(row.outbox_id, errorMessage);
         deadLetterCount += 1;
         console.error(`[${LOG_TAG}] Dead-letter outbox_id=${row.outbox_id} after ${attemptCount} attempts: ${errorMessage}`);
