@@ -181,7 +181,7 @@ test('post and engagement both run on any execution hour', async () => {
 
 
 describe('shouldFetchPostsForClient', () => {
-  test('returns true for all client types across all hours', () => {
+  test('keeps the intentional DITINTELKAM post-fetch exclusion across all hours', () => {
     const orgClient = { client_id: 'POLRESTA', client_type: 'org' };
     const ditbinmasClient = { client_id: 'DITBINMAS', client_type: 'direktorat' };
     const bidhumasClient = { client_id: 'BIDHUMAS', client_type: 'direktorat' };
@@ -196,8 +196,8 @@ describe('shouldFetchPostsForClient', () => {
     expect(shouldFetchPostsForClient(bidhumasClient, new Date('2026-01-01T02:30:00.000Z'))).toBe(true);
     expect(shouldFetchPostsForClient(bidhumasClient, new Date('2026-01-01T14:30:00.000Z'))).toBe(true);
 
-    expect(shouldFetchPostsForClient(ditintelkamClient, new Date('2026-01-01T03:00:00.000Z'))).toBe(true);
-    expect(shouldFetchPostsForClient(ditintelkamClient, new Date('2026-01-01T14:30:00.000Z'))).toBe(true);
+    expect(shouldFetchPostsForClient(ditintelkamClient, new Date('2026-01-01T03:00:00.000Z'))).toBe(false);
+    expect(shouldFetchPostsForClient(ditintelkamClient, new Date('2026-01-01T14:30:00.000Z'))).toBe(false);
   });
 });
 

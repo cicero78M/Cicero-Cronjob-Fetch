@@ -1,5 +1,5 @@
 // src/model/instaLikeModel.js
-import { query } from '../repository/db.js';
+import { query, withTransaction } from '../repository/db.js';
 import { buildPriorityOrderClause } from '../utils/sqlPriority.js';
 
 const DEFAULT_ACTIVITY_START = '2025-09-01';
@@ -50,14 +50,44 @@ function normalizeLikeUsernamesPayload(payload) {
  * Disarankan kolom likes bertipe JSONB.
  */
 export async function upsertInstaLike(shortcode, likes) {
-  const result = await query(
-    `INSERT INTO insta_like (shortcode, likes, updated_at)
-     VALUES ($1, $2, NOW())
-     ON CONFLICT (shortcode) DO UPDATE
-     SET likes = EXCLUDED.likes, updated_at = NOW()`,
-    [shortcode, JSON.stringify(likes)]
-  );
-  return result.rowCount;
+  if (!shortcode) return 0;
+
+  return withTransaction(async (client) => {
+    // Serialize writers for one shortcode. Without this lock, two overlapping
+    // fetches can both read the same old value and the last writer can replace
+    // a larger result with a smaller, partial upstream response.
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [shortcode]);
+
+    const existingResult = await client.query(
+      'SELECT likes FROM insta_like WHERE shortcode = $1 FOR UPDATE',
+      [shortcode],
+    );
+    const existing = normalizeLikeUsernamesPayload(existingResult.rows[0]?.likes);
+    const incoming = normalizeLikeUsernamesPayload(likes);
+    const merged = [...new Set([...existing, ...incoming])];
+
+    await client.query(
+      `INSERT INTO insta_like (shortcode, likes, updated_at)
+       VALUES ($1, $2::jsonb, NOW())
+       ON CONFLICT (shortcode) DO UPDATE
+       SET likes = EXCLUDED.likes, updated_at = NOW()`,
+      [shortcode, JSON.stringify(merged)],
+    );
+
+    // Only add rows to the helper. Do not delete/rebuild it: the helper is a
+    // cumulative projection of the main record and must not shrink because a
+    // fetch response is partial or arrives out of order.
+    await client.query(
+      `INSERT INTO insta_like_users (shortcode, username)
+       SELECT $1, value
+       FROM jsonb_array_elements_text($2::jsonb) AS item(value)
+       WHERE value <> ''
+       ON CONFLICT (shortcode, username) DO NOTHING`,
+      [shortcode, JSON.stringify(merged)],
+    );
+
+    return merged.length;
+  });
 }
 
 /**
@@ -456,14 +486,15 @@ export async function getRekapLikesByClient(
     GROUP BY username, client_id
   `;
   let likeJoin = `
-    lower(replace(trim(u.insta), '@', '')) = lc.username
+    (EXISTS (SELECT 1 FROM user_social_accounts usa WHERE usa.user_id = u.user_id AND LOWER(usa.platform) = 'instagram' AND usa.is_active = TRUE AND lower(replace(trim(coalesce(usa.username, '')), '@', '')) = lc.username)
+    OR lower(replace(trim(coalesce(u.insta, '')), '@', '')) = lc.username)
     AND LOWER(u.client_id) = LOWER(lc.client_id)
   `;
   if (userClientParamIdx !== null) {
     userWhere = `LOWER(u.client_id) = LOWER($${userClientParamIdx})`;
   }
   if (userClientParamIdx === null || !matchLikeClientId) {
-    likeJoin = "lower(replace(trim(u.insta), '@', '')) = lc.username";
+    likeJoin = "(EXISTS (SELECT 1 FROM user_social_accounts usa WHERE usa.user_id = u.user_id AND LOWER(usa.platform) = 'instagram' AND usa.is_active = TRUE AND lower(replace(trim(coalesce(usa.username, '')), '@', '')) = lc.username) OR lower(replace(trim(coalesce(u.insta, '')), '@', '')) = lc.username)";
     likeCountsSelect = `
       SELECT username, COUNT(DISTINCT shortcode) AS jumlah_like
       FROM valid_likes

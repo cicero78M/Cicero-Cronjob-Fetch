@@ -217,7 +217,12 @@ export async function getClientsByRole(roleName, clientId = null) {
 export async function getUsersByClient(client_id, roleFilter = null) {
   const { clause, params } = await buildClientFilter(client_id, 'u', 1, roleFilter);
   const res = await query(
-    `SELECT u.user_id, u.nama, u.tiktok, u.insta, u.divisi, u.title, u.status, u.exception, u.exception_tiktok, u.jabatan,
+    `SELECT u.user_id, u.nama, u.tiktok,
+            COALESCE((SELECT usa.username FROM user_social_accounts usa
+                      WHERE usa.user_id = u.user_id AND LOWER(usa.platform) = 'tiktok'
+                        AND usa.is_active = TRUE AND trim(coalesce(usa.username, '')) <> ''
+                      ORDER BY usa.account_order ASC, usa.created_at ASC LIMIT 1), u.tiktok) AS effective_tiktok,
+            u.insta, u.divisi, u.title, u.status, u.exception, u.exception_tiktok, u.jabatan,
             u.whatsapp, u.email, u.client_id, c.nama AS client_name, c.regional_id AS regional_id
      FROM "user" u
      LEFT JOIN clients c ON LOWER(c.client_id) = LOWER(u.client_id)
@@ -230,7 +235,12 @@ export async function getUsersByClient(client_id, roleFilter = null) {
 // Ambil semua user aktif berdasarkan client_id yang spesifik dan role tertentu
 export async function getUsersByClientAndRole(client_id, roleFilter = null) {
   const params = [client_id];
-  let sql = `SELECT u.user_id, u.nama, u.tiktok, u.insta, u.divisi, u.title, u.status, u.exception, u.exception_tiktok, u.jabatan,
+  let sql = `SELECT u.user_id, u.nama, u.tiktok,
+            COALESCE((SELECT usa.username FROM user_social_accounts usa
+                      WHERE usa.user_id = u.user_id AND LOWER(usa.platform) = 'tiktok'
+                        AND usa.is_active = TRUE AND trim(coalesce(usa.username, '')) <> ''
+                      ORDER BY usa.account_order ASC, usa.created_at ASC LIMIT 1), u.tiktok) AS effective_tiktok,
+            u.insta, u.divisi, u.title, u.status, u.exception, u.exception_tiktok, u.jabatan,
             u.whatsapp, u.email, u.client_id, c.nama AS client_name, c.regional_id AS regional_id
      FROM "user" u
      LEFT JOIN clients c ON LOWER(c.client_id) = LOWER(u.client_id)
@@ -558,6 +568,10 @@ export async function getUsersByDirektorat(flag, clientId = null) {
 
   let sql = `SELECT
       u.*,
+      COALESCE((SELECT usa.username FROM user_social_accounts usa
+                WHERE usa.user_id = u.user_id AND LOWER(usa.platform) = 'tiktok'
+                  AND usa.is_active = TRUE AND trim(coalesce(usa.username, '')) <> ''
+                ORDER BY usa.account_order ASC, usa.created_at ASC LIMIT 1), u.tiktok) AS effective_tiktok,
       c.regional_id AS regional_id,
       bool_or(r.role_name='ditbinmas') AS ditbinmas,
       bool_or(r.role_name='ditlantas') AS ditlantas,

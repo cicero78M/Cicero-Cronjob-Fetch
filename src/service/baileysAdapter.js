@@ -22,6 +22,40 @@ const SHUTDOWN_SIGNALS = ['SIGINT', 'SIGTERM'];
 // Delay to ensure async file system operations complete before verification
 const FILE_SYSTEM_OPERATION_DELAY = 100; // milliseconds
 
+function readBoundedPositiveInt(name, fallback, { min = 1000, max = 300000 } = {}) {
+  const parsed = Number.parseInt(String(process.env[name] || ''), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function withOperationTimeout(promise, timeoutMs, operation) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      const error = new Error(`[BAILEYS] ${operation} timed out after ${timeoutMs}ms`);
+      error.code = 'WA_BAILEYS_OPERATION_TIMEOUT';
+      reject(error);
+    }, timeoutMs);
+
+    Promise.resolve(promise).then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
 function resolveDefaultAuthDataPath() {
   const homeDir = os.homedir?.();
   const baseDir = homeDir || process.cwd();
@@ -40,10 +74,6 @@ function resolveAuthDataPath() {
 
 function shouldClearAuthSession() {
   return process.env.WA_AUTH_CLEAR_SESSION_ON_REINIT === 'true';
-}
-
-function shouldResetAuthOnSignalError() {
-  return process.env.WA_SIGNAL_ERROR_RESET_AUTH_SESSION === 'true';
 }
 
 function shouldStrictSingleOwner() {
@@ -101,7 +131,6 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   const sessionPath = path.join(authBasePath, clientId);
   const sessionLockPath = path.join(sessionPath, SESSION_LOCK_FILE_NAME);
   const clearAuthSession = shouldClearAuthSession();
-  const resetAuthOnSignalError = shouldResetAuthOnSignalError();
   const strictSingleOwner = shouldStrictSingleOwner();
 
   // Create auth directory if it doesn't exist
@@ -129,6 +158,39 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   let connectStartedAt = null;
   let reinitInProgress = false;
   let reconnectTimeout = null;
+  let reconnectAttempts = 0;
+  let badSessionRecoveryAttempts = 0;
+  let connectionState = 'DISCONNECTED';
+  let stopped = false;
+  let socketGeneration = 0;
+  const connectTimeoutMs = readBoundedPositiveInt(
+    'WA_BAILEYS_CONNECT_TIMEOUT_MS',
+    30000
+  );
+  const queryTimeoutMs = readBoundedPositiveInt(
+    'WA_BAILEYS_QUERY_TIMEOUT_MS',
+    60000
+  );
+  const keepAliveIntervalMs = readBoundedPositiveInt(
+    'WA_BAILEYS_KEEPALIVE_INTERVAL_MS',
+    20000,
+    { min: 5000, max: 60000 }
+  );
+  const reconnectBaseDelayMs = readBoundedPositiveInt(
+    'WA_BAILEYS_RECONNECT_BASE_DELAY_MS',
+    3000,
+    { min: 500, max: 60000 }
+  );
+  const reconnectMaxDelayMs = readBoundedPositiveInt(
+    'WA_BAILEYS_RECONNECT_MAX_DELAY_MS',
+    60000,
+    { min: reconnectBaseDelayMs, max: 300000 }
+  );
+  const maxBadSessionRecoveryAttempts = readBoundedPositiveInt(
+    'WA_BAILEYS_MAX_BAD_SESSION_RECOVERY_ATTEMPTS',
+    2,
+    { min: 1, max: 10 }
+  );
   let consecutiveMacErrors = 0;
   const MAX_CONSECUTIVE_MAC_ERRORS = 2; // Reduced from 3 to 2 for faster recovery
   let lastMacErrorTime = 0;
@@ -160,7 +222,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
     {
       category: 'bad-mac-decrypt',
       patterns: ['bad mac'],
-      canonicalText: 'bad mac',
+      canonicalText: 'Bad MAC',
     },
   ];
 
@@ -341,7 +403,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
     const normalizedError = normalizeBadMacErrorText(errorMsg);
     const { errorCategory, errorCoreText } = extractBadMacCategory(normalizedError);
     const senderKey = senderJid || '';
-    const errorSignature = `${senderKey}|${source}|${errorCategory}`;
+    const errorSignature = `${senderKey}|${errorCategory}|${normalizedError}`;
 
     if (
       lastMacErrorSignature &&
@@ -474,12 +536,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             await reinitializeClient(
               'bad-mac-error-decryption',
               reason,
-              // A Bad MAC can be limited to one stale Signal session. Deleting the
-              // whole auth directory logs the device out and turns a recoverable
-              // delivery problem into a mandatory QR re-pair. Honour the explicit
-              // operator setting instead; destructive clearing remains available
-              // through WA_SIGNAL_ERROR_RESET_AUTH_SESSION=true.
-              { clearAuthSessionOverride: resetAuthOnSignalError }
+              { clearAuthSessionOverride: true }
             );
             consecutiveMacErrors = 0;
             lastMacErrorTime = 0;
@@ -576,16 +633,60 @@ export async function createBaileysClient(clientId = 'wa-admin') {
     }
   });
 
+  const scheduleReconnect = (reason = 'connection-close') => {
+    if (stopped || reinitInProgress || reconnectTimeout) {
+      return;
+    }
+
+    const delayMs = Math.min(
+      reconnectMaxDelayMs,
+      reconnectBaseDelayMs * 2 ** Math.min(reconnectAttempts, 6)
+    );
+    reconnectAttempts += 1;
+    console.warn(
+      `[BAILEYS] Reconnect scheduled for clientId=${clientId} in ${delayMs}ms ` +
+        `(attempt=${reconnectAttempts}, reason=${reason})`
+    );
+
+    reconnectTimeout = setTimeout(async () => {
+      reconnectTimeout = null;
+      if (stopped || reinitInProgress) return;
+
+      try {
+        await startConnect('auto-reconnect');
+      } catch (err) {
+        console.error(
+          `[BAILEYS] Reconnect attempt failed for clientId=${clientId}:`,
+          err?.message || err
+        );
+        scheduleReconnect('connect-error');
+      }
+    }, delayMs);
+
+    if (typeof reconnectTimeout.unref === 'function') {
+      reconnectTimeout.unref();
+    }
+  };
+
   /**
    * Initialize and connect the Baileys client
    */
   const startConnect = async (trigger = 'connect') => {
+    if (stopped && trigger === 'auto-reconnect') {
+      return null;
+    }
+
+    if (connectionState === 'CONNECTED' && sock) {
+      return sock;
+    }
+
     if (connectInProgress) {
       console.log(`[BAILEYS] Connection already in progress for clientId=${clientId}`);
       return connectInProgress;
     }
 
     connectStartedAt = Date.now();
+    connectionState = 'CONNECTING';
     console.log(`[BAILEYS] Starting connection for clientId=${clientId} (trigger: ${trigger})`);
 
     connectInProgress = (async () => {
@@ -594,16 +695,34 @@ export async function createBaileysClient(clientId = 'wa-admin') {
 
         // Load auth state from file system
         console.log(`[BAILEYS] Loading auth state from: ${sessionPath}`);
-        const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+        const { state, saveCreds } = await withOperationTimeout(
+          useMultiFileAuthState(sessionPath),
+          connectTimeoutMs,
+          'auth state initialization'
+        );
         console.log(`[BAILEYS] Auth state loaded successfully`);
         
         // Fetch latest Baileys version
-        const { version, isLatest } = await fetchLatestBaileysVersion();
-        console.log(`[BAILEYS] Using WA version ${version.join('.')}, isLatest: ${isLatest}`);
+        let versionConfig = {};
+        try {
+          const { version, isLatest } = await withOperationTimeout(
+            fetchLatestBaileysVersion(),
+            connectTimeoutMs,
+            'WA version lookup'
+          );
+          versionConfig = { version };
+          console.log(`[BAILEYS] Using WA version ${version.join('.')}, isLatest: ${isLatest}`);
+        } catch (versionError) {
+          console.warn(
+            '[BAILEYS] Failed to fetch latest WA version; using Baileys bundled default:',
+            versionError?.message || versionError
+          );
+        }
 
         // Create socket
-        sock = makeWASocket({
-          version,
+        const currentGeneration = ++socketGeneration;
+        const currentSocket = makeWASocket({
+          ...versionConfig,
           logger,
           printQRInTerminal: false,
           auth: {
@@ -612,26 +731,51 @@ export async function createBaileysClient(clientId = 'wa-admin') {
           },
           browser: Browsers.ubuntu('Chrome'),
           generateHighQualityLinkPreview: true,
+          connectTimeoutMs,
+          defaultQueryTimeoutMs: queryTimeoutMs,
+          keepAliveIntervalMs,
+          markOnlineOnConnect: false,
+          syncFullHistory: false,
         });
+        sock = currentSocket;
 
         // Save credentials whenever they are updated
-        sock.ev.on('creds.update', saveCreds);
+        currentSocket.ev.on('creds.update', (...args) => {
+          if (stopped || currentGeneration !== socketGeneration || sock !== currentSocket) return;
+          return saveCreds(...args);
+        });
 
         // Connection state updates
-        sock.ev.on('connection.update', async (update) => {
+        currentSocket.ev.on('connection.update', async (update) => {
+          if (stopped || currentGeneration !== socketGeneration || sock !== currentSocket) return;
           const { connection, lastDisconnect, qr } = update;
+
+          if (connection === 'connecting') {
+            connectionState = 'CONNECTING';
+          }
 
           // QR code
           if (qr) {
+            connectionState = 'AWAITING_QR';
             console.log('[BAILEYS] QR Code received');
             emitter.emit('qr', qr);
           }
 
           // Connection opened
           if (connection === 'open') {
+            connectionState = 'CONNECTED';
+            reconnectAttempts = 0;
+            badSessionRecoveryAttempts = 0;
+            emitter.fatalInitError = null;
+            if (reconnectTimeout) {
+              clearTimeout(reconnectTimeout);
+              reconnectTimeout = null;
+            }
             console.log('[BAILEYS] Connection opened successfully');
             consecutiveMacErrors = 0; // Reset counter on successful connection
             lastMacErrorTime = 0; // Reset timestamp
+            lastMacErrorSignature = null;
+            lastMacErrorSignatureTime = 0;
             errorsDuringCooldown = 0; // Reset cooldown error counter
             emitter.emit('authenticated');
             emitter.emit('ready');
@@ -639,9 +783,15 @@ export async function createBaileysClient(clientId = 'wa-admin') {
 
           // Connection closed
           if (connection === 'close') {
-            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const statusCode =
+              lastDisconnect?.error?.output?.statusCode ??
+              lastDisconnect?.error?.statusCode ??
+              lastDisconnect?.error?.data?.statusCode;
             const isLoggedOut = statusCode === DisconnectReason.loggedOut;
-            const shouldReconnect = !isLoggedOut;
+            const isConnectionReplaced = statusCode === DisconnectReason.connectionReplaced;
+            const isBadSession = statusCode === DisconnectReason.badSession && !isLoggedOut;
+            const shouldReconnect = !isLoggedOut && !isConnectionReplaced && !isBadSession;
+            connectionState = 'DISCONNECTED';
             
             console.log(
               `[BAILEYS] Connection closed (statusCode: ${statusCode}, shouldReconnect: ${shouldReconnect})`
@@ -658,9 +808,41 @@ export async function createBaileysClient(clientId = 'wa-admin') {
               } catch (err) {
                 console.error('[BAILEYS] Failed to reinitialize after logout:', err?.message || err);
               }
+            } else if (isBadSession && !reinitInProgress) {
+              // A single 'badSession' close from Baileys does not always mean the
+              // credentials are truly invalid (observed: transient closes with
+              // statusCode 500 that recover after a normal reconnect). Attempt an
+              // in-place reinitialize (auth kept intact) before declaring auth
+              // failure, to avoid unnecessary manual re-authentication and outbox
+              // dead-lettering during transient WhatsApp-side hiccups.
+              badSessionRecoveryAttempts += 1;
+              const attemptLabel = `${badSessionRecoveryAttempts}/${maxBadSessionRecoveryAttempts}`;
+
+              if (badSessionRecoveryAttempts <= maxBadSessionRecoveryAttempts) {
+                console.warn(
+                  `[BAILEYS] Bad session detected for clientId=${clientId}. ` +
+                    `Attempting in-place reinitialize (${attemptLabel}) before declaring auth failure.`
+                );
+                try {
+                  await reinitializeClient('bad-session', reason, { clearAuthSessionOverride: false });
+                } catch (err) {
+                  console.error('[BAILEYS] Failed bad-session reinitialize:', err?.message || err);
+                  emitter.emit('auth_failure', 'BAD_SESSION');
+                  await releaseSessionLock();
+                }
+              } else {
+                console.error(
+                  `[BAILEYS] Bad session persisted after ${maxBadSessionRecoveryAttempts} recovery attempts ` +
+                    `for clientId=${clientId}. Manual re-authentication is required.`
+                );
+                emitter.emit('auth_failure', 'BAD_SESSION');
+                await releaseSessionLock();
+              }
             } else if (shouldReconnect && !reinitInProgress) {
-              console.log('[BAILEYS] Attempting to reconnect...');
-              reconnectTimeout = setTimeout(() => startConnect('auto-reconnect'), 3000);
+              scheduleReconnect(reason);
+            } else if (isConnectionReplaced) {
+              emitter.emit('auth_failure', 'CONNECTION_REPLACED');
+              await releaseSessionLock();
             }
           }
 
@@ -681,7 +863,8 @@ export async function createBaileysClient(clientId = 'wa-admin') {
         });
 
         // Message events
-        sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        currentSocket.ev.on('messages.upsert', async ({ messages, type }) => {
+          if (stopped || currentGeneration !== socketGeneration || sock !== currentSocket) return;
           if (type !== 'notify') return;
 
           for (const msg of messages) {
@@ -746,6 +929,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
         console.log(`[BAILEYS] Client initialized for clientId=${clientId}`);
         
       } catch (error) {
+        connectionState = 'DISCONNECTED';
         console.error(`[BAILEYS] Connection error for clientId=${clientId}:`, error.message);
         if (error?.code === 'WA_BAILEYS_SHARED_SESSION_LOCK') {
           const lockOwnerPid = error?.ownerPid || 'unknown';
@@ -840,6 +1024,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
     const shouldClearSession = options?.clearAuthSessionOverride ?? clearAuthSession;
     const clearSessionLabel = shouldClearSession ? ' (clear session)' : '';
     reinitInProgress = true;
+    stopped = false;
 
     console.warn(
       `[BAILEYS] Reinitializing clientId=${clientId} after ${trigger}${
@@ -850,12 +1035,15 @@ export async function createBaileysClient(clientId = 'wa-admin') {
     try {
       // Close existing connection gracefully
       if (sock) {
+        const socketToClose = sock;
+        sock = null;
+        socketGeneration += 1;
+        connectionState = 'DISCONNECTED';
         try {
-          sock.end();
+          socketToClose.end();
         } catch (err) {
           console.warn('[BAILEYS] Error closing socket:', err?.message || err);
         }
-        sock = null;
       }
 
       // Clear reconnect timeout
@@ -936,7 +1124,10 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   // PUBLIC API
   // ======================
 
-  emitter.connect = async () => startConnect('connect');
+  emitter.connect = async () => {
+    stopped = false;
+    return startConnect('connect');
+  };
 
   emitter.reinitialize = async (options = {}) => {
     const safeOptions = options && typeof options === 'object' ? options : {};
@@ -950,13 +1141,18 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   };
 
   emitter.disconnect = async () => {
+    stopped = true;
+    connectionState = 'DISCONNECTED';
+    reconnectAttempts = 0;
+    socketGeneration += 1;
     if (reconnectTimeout) {
       clearTimeout(reconnectTimeout);
       reconnectTimeout = null;
     }
     if (sock) {
-      sock.end();
+      const socketToClose = sock;
       sock = null;
+      socketToClose.end();
     }
     await releaseSessionLock();
   };
@@ -968,7 +1164,11 @@ export async function createBaileysClient(clientId = 'wa-admin') {
     }
 
     try {
-      const [result] = await sock.onWhatsApp(phone);
+      const [result] = await withOperationTimeout(
+        sock.onWhatsApp(phone),
+        queryTimeoutMs,
+        'number lookup'
+      );
       return result?.exists ? result.jid : null;
     } catch (err) {
       console.warn('[BAILEYS] getNumberId failed:', err?.message || err);
@@ -996,31 +1196,38 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   };
 
   emitter.sendMessage = async (jid, content, options = {}) => {
-    if (!sock) {
-      throw new Error('[BAILEYS] Socket not initialized');
+    if (!sock || connectionState !== 'CONNECTED') {
+      const error = new Error('[BAILEYS] Socket is not connected');
+      error.code = 'WA_BAILEYS_NOT_READY';
+      error.retryable = true;
+      throw error;
     }
 
     const safeOptions = options && typeof options === 'object' ? options : {};
 
     try {
       let sentMsg;
-      let messagePreview = '';
-
       // Handle document sending
       if (content && typeof content === 'object' && 'document' in content) {
-        messagePreview = `document: ${content.fileName || 'unnamed'}`;
         console.log(`[BAILEYS] Sending document to ${jid}: ${content.fileName || 'unnamed'}`);
-        sentMsg = await sock.sendMessage(jid, {
-          document: content.document,
-          mimetype: content.mimetype || 'application/octet-stream',
-          fileName: content.fileName || 'document',
-        });
+        sentMsg = await withOperationTimeout(
+          sock.sendMessage(jid, {
+            document: content.document,
+            mimetype: content.mimetype || 'application/octet-stream',
+            fileName: content.fileName || 'document',
+          }),
+          queryTimeoutMs,
+          'document send'
+        );
       } else {
         // Handle text messages
         const text = typeof content === 'string' ? content : content?.text ?? '';
-        messagePreview = text.length > 64 ? text.substring(0, 64) + '...' : text;
-        console.log(`[BAILEYS] Sending text message to ${jid}: ${messagePreview}`);
-        sentMsg = await sock.sendMessage(jid, { text });
+        console.log(`[BAILEYS] Sending text message to ${jid} (${text.length} chars)`);
+        sentMsg = await withOperationTimeout(
+          sock.sendMessage(jid, { text }),
+          queryTimeoutMs,
+          'message send'
+        );
       }
 
       const messageId = sentMsg?.key?.id || '';
@@ -1032,7 +1239,13 @@ export async function createBaileysClient(clientId = 'wa-admin') {
       console.error('[BAILEYS] sendMessage failed:', err?.message || err);
       const error = new Error(`sendMessage failed: ${err?.message || err}`);
       error.jid = jid;
-      error.retryable = false;
+      error.retryable =
+        connectionState !== 'CONNECTED' ||
+        err?.code === 'WA_BAILEYS_OPERATION_TIMEOUT' ||
+        ['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNABORTED'].includes(err?.code) ||
+        err?.output?.statusCode === DisconnectReason.connectionClosed ||
+        err?.output?.statusCode === DisconnectReason.connectionLost ||
+        err?.output?.statusCode === DisconnectReason.timedOut;
       throw error;
     }
   };
@@ -1040,12 +1253,13 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   emitter.onMessage = (handler) => emitter.on('message', handler);
   emitter.onDisconnect = (handler) => emitter.on('disconnected', handler);
 
-  emitter.isReady = async () => sock !== null && sock.user !== undefined;
+  emitter.isReady = async () => connectionState === 'CONNECTED' && sock !== null;
 
   emitter.getState = async () => {
-    if (!sock) return 'DISCONNECTED';
-    if (sock.user) return 'CONNECTED';
-    return 'OPENING';
+    if (connectionState === 'CONNECTED' || (sock && sock.user)) return 'CONNECTED';
+    if (connectionState === 'AWAITING_QR') return 'AWAITING_QR';
+    if (connectionState === 'CONNECTING' && sock) return 'OPENING';
+    return 'DISCONNECTED';
   };
 
   emitter.sendSeen = async (jid) => {
@@ -1093,6 +1307,13 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   emitter.fatalInitError = null;
 
   const shutdownHandler = () => {
+    stopped = true;
+    connectionState = 'DISCONNECTED';
+    socketGeneration += 1;
+    if (reconnectTimeout) {
+      clearTimeout(reconnectTimeout);
+      reconnectTimeout = null;
+    }
     clearInterval(cooldownSummaryInterval);
     flushCooldownSuppressionSummary();
     releaseSessionLock().catch((err) => {

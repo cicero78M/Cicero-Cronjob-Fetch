@@ -13,6 +13,14 @@ import { formatJakartaDate, getJakartaNowParts, JAKARTA_TIME_ZONE } from "../uti
 const DITBINMAS_CLIENT_ID = "DITBINMAS";
 const TARGET_ROLE = "ditbinmas";
 
+function getTikTokUsernameAliases(user) {
+  return [...new Set(
+    [user?.effective_tiktok, user?.tiktok_legacy, user?.tiktok]
+      .filter((value) => typeof value === "string" && value.trim() !== "")
+      .map(normalizeUsername),
+  )];
+}
+
 const STATUS_SECTIONS = [
   { key: "lengkap", icon: "✅", label: "Lengkap (sesuai target)" },
   { key: "sebagian", icon: "🟡", label: "Sebagian (belum semua konten)" },
@@ -190,7 +198,7 @@ function formatEntryLine(entry, index, totalKonten) {
   const user = entry.user;
   const polres = (user?.client_name || user?.client_id || "-").toUpperCase();
   const name = formatNama(user) || "(Tanpa Nama)";
-  if (!user?.tiktok) {
+  if (getTikTokUsernameAliases(user).length === 0) {
     return `${index}. ${name} (${polres}) — Username TikTok belum tersedia`;
   }
   if (totalKonten === 0) {
@@ -208,12 +216,12 @@ function formatEntryLine(entry, index, totalKonten) {
 async function buildLiveFallbackCounts(kasatUsers, referenceDate) {
   const usernameToUsers = new Map();
   kasatUsers.forEach((user) => {
-    const normalizedUsername = normalizeUsername(user?.tiktok);
-    if (!normalizedUsername) return;
-    if (!usernameToUsers.has(normalizedUsername)) {
-      usernameToUsers.set(normalizedUsername, []);
-    }
-    usernameToUsers.get(normalizedUsername).push(user);
+    getTikTokUsernameAliases(user).forEach((normalizedUsername) => {
+      if (!usernameToUsers.has(normalizedUsername)) {
+        usernameToUsers.set(normalizedUsername, []);
+      }
+      usernameToUsers.get(normalizedUsername).push(user);
+    });
   });
 
   const commentCountByUser = new Map();
@@ -335,7 +343,7 @@ export async function generateKasatBinmasTiktokCommentRecap({
   kasatUsers.forEach((user) => {
     const count = commentCountByUser.get(user.user_id) || 0;
     let key = "belum";
-    if (!user?.tiktok) {
+    if (getTikTokUsernameAliases(user).length === 0) {
       key = "noUsername";
     } else if (count >= totalKonten) {
       key = "lengkap";

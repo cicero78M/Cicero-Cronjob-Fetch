@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { fetchTiktokSecUid } from './clientService.js';
 import { env } from '../config/env.js';
+import { withAxiosTimeout } from '../utils/httpTimeout.js';
 
 const COMMENT_PAGE_MAX_RETRIES = 3;
 const COMMENT_PAGE_BASE_DELAY_MS = 500;
@@ -104,14 +105,14 @@ function parsePostDetail(resData) {
 }
 
 async function requestRapidApiPosts({ host, key, endpoint, params }) {
-  const res = await axios.get(`https://${host}/${endpoint}`, {
+  const res = await axios.get(`https://${host}/${endpoint}`, withAxiosTimeout({
     params,
     headers: {
       'X-RapidAPI-Key': key,
       'X-RapidAPI-Host': host,
       'x-cache-control': 'no-cache'
     }
-  });
+  }));
   return parsePosts(res);
 }
 
@@ -159,14 +160,14 @@ async function fetchPostsWithFallback(primaryFetcher, fallbackFetcher, limit) {
 export async function fetchTiktokProfile(username) {
   if (!username) return null;
   try {
-    const res = await axios.get(`https://${RAPIDAPI_HOST}/api/user/info`, {
+    const res = await axios.get(`https://${RAPIDAPI_HOST}/api/user/info`, withAxiosTimeout({
       params: { uniqueId: username.replace(/^@/, '') },
       headers: {
         'X-RapidAPI-Key': RAPIDAPI_KEY,
         'X-RapidAPI-Host': RAPIDAPI_HOST,
         'x-cache-control': 'no-cache'
       }
-    });
+    }));
     const data = res.data?.userInfo;
     if (!data) return res.data;
     return {
@@ -193,14 +194,14 @@ export async function fetchTiktokProfile(username) {
 export async function fetchTiktokInfo(username) {
   if (!username) return null;
   try {
-    const res = await axios.get(`https://${RAPIDAPI_HOST}/api/user/info`, {
+    const res = await axios.get(`https://${RAPIDAPI_HOST}/api/user/info`, withAxiosTimeout({
       params: { uniqueId: username.replace(/^@/, '') },
       headers: {
         'X-RapidAPI-Key': RAPIDAPI_KEY,
         'X-RapidAPI-Host': RAPIDAPI_HOST,
         'x-cache-control': 'no-cache'
       }
-    });
+    }));
     return res.data || null;
   } catch (err) {
     const msg = err.response?.data
@@ -215,6 +216,20 @@ export async function fetchTiktokInfo(username) {
 export async function fetchTiktokPosts(username, limit = 10) {
   if (!username) return [];
   const normalizedUsername = username.replace(/^@/, '');
+
+  // API23 is more reliable for post retrieval when it receives secUid.
+  // Resolve it through the same RapidAPI provider before trying the legacy
+  // username parameters. The legacy request remains a fallback in case the
+  // profile endpoint cannot resolve the account.
+  let resolvedSecUid = null;
+  try {
+    resolvedSecUid = await fetchTiktokSecUid(normalizedUsername);
+  } catch {}
+
+  if (resolvedSecUid) {
+    return fetchTiktokPostsBySecUid(resolvedSecUid, limit);
+  }
+
   const params = {
     uniqueId: normalizedUsername,
     username: normalizedUsername,
@@ -289,14 +304,14 @@ export async function fetchTiktokCommentsPage(videoId, cursor = 0, count = 50) {
 
   for (let attempt = 1; attempt <= COMMENT_PAGE_MAX_RETRIES; attempt++) {
     try {
-      const res = await axios.get(`https://${RAPIDAPI_HOST}/api/post/comments`, {
+      const res = await axios.get(`https://${RAPIDAPI_HOST}/api/post/comments`, withAxiosTimeout({
         params: { videoId, count: String(count), cursor: String(cursor) },
         headers: {
           'X-RapidAPI-Key': RAPIDAPI_KEY,
           'X-RapidAPI-Host': RAPIDAPI_HOST,
           'x-cache-control': 'no-cache'
         }
-      });
+      }));
       let comments = [];
       let total = null;
       const data = res.data;
@@ -347,7 +362,7 @@ function parseCommentListPayload(payload) {
 }
 
 async function fetchTiktokCommentRepliesPageWeb(videoId, commentId, cursor = 0, count = 50) {
-  const res = await axios.get(`${TIKTOK_WEB_BASE_URL}${TIKTOK_WEB_COMMENT_REPLY_ENDPOINT}`, {
+  const res = await axios.get(`${TIKTOK_WEB_BASE_URL}${TIKTOK_WEB_COMMENT_REPLY_ENDPOINT}`, withAxiosTimeout({
     params: {
       item_id: videoId,
       comment_id: commentId,
@@ -355,7 +370,7 @@ async function fetchTiktokCommentRepliesPageWeb(videoId, commentId, cursor = 0, 
       count: String(count),
     },
     headers: TIKTOK_WEB_DEFAULT_HEADERS,
-  });
+  }));
   const parsed = parseCommentListPayload(res?.data || {});
   const nextCursor = parsed.hasMore
     ? parsed.nextCursor ?? cursor + count
@@ -394,14 +409,14 @@ export async function fetchTiktokPostDetail(videoId) {
   }
 
   try {
-    const res = await axios.get(`https://${RAPIDAPI_HOST}/api/post/detail`, {
+    const res = await axios.get(`https://${RAPIDAPI_HOST}/api/post/detail`, withAxiosTimeout({
       params: { videoId },
       headers: {
         'X-RapidAPI-Key': RAPIDAPI_KEY,
         'X-RapidAPI-Host': RAPIDAPI_HOST,
         'x-cache-control': 'no-cache'
       }
-    });
+    }));
 
     const itemStruct = parsePostDetail(res.data);
     if (!itemStruct) {

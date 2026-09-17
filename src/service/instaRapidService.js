@@ -1,6 +1,7 @@
 import axios from 'axios';
 import fetch from 'node-fetch';
 import { env } from '../config/env.js';
+import { withAxiosTimeout, withFetchTimeout } from '../utils/httpTimeout.js';
 
 const RAPIDAPI_KEY = env.RAPIDAPI_KEY;
 const RAPIDAPI_HOST = 'social-api4.p.rapidapi.com';
@@ -43,9 +44,9 @@ function buildRapidApiHeaders(host, key) {
 async function fetchRapidApiResponse(path, params) {
   assertRapidApiKey();
   const url = `https://${RAPIDAPI_HOST}/${path}?${params.toString()}`;
-  const res = await fetch(url, {
+  const res = await fetch(url, withFetchTimeout({
     headers: buildRapidApiHeaders(RAPIDAPI_HOST, RAPIDAPI_KEY),
-  });
+  }));
   if (res.ok || !shouldUseRapidApiFallback(res.status)) return res;
 
   const fallback = getRapidApiFallbackConfig();
@@ -58,21 +59,21 @@ async function fetchRapidApiResponse(path, params) {
   });
 
   const fallbackUrl = `https://${fallback.host}/${path}?${params.toString()}`;
-  return fetch(fallbackUrl, {
+  return fetch(fallbackUrl, withFetchTimeout({
     headers: buildRapidApiHeaders(fallback.host, fallback.key),
-  });
+  }));
 }
 
 async function axiosGetRapidApi(path, params, options = {}) {
   assertRapidApiKey();
   try {
-    return await axios.get(`https://${RAPIDAPI_HOST}/${path}`, {
+    return await axios.get(`https://${RAPIDAPI_HOST}/${path}`, withAxiosTimeout({
       params,
       headers: {
         ...buildRapidApiHeaders(RAPIDAPI_HOST, RAPIDAPI_KEY),
         ...(options.headers || {}),
       },
-    });
+    }));
   } catch (err) {
     const statusCode = err.response?.status;
     if (shouldUseRapidApiFallback(statusCode)) {
@@ -89,13 +90,13 @@ async function axiosGetRapidApi(path, params, options = {}) {
           status: statusCode,
           host: fallback.host,
         });
-        return axios.get(`https://${fallback.host}/${path}`, {
+        return axios.get(`https://${fallback.host}/${path}`, withAxiosTimeout({
           params,
           headers: {
             ...buildRapidApiHeaders(fallback.host, fallback.key),
             ...(options.headers || {}),
           },
-        });
+        }));
       }
     }
     throw err;

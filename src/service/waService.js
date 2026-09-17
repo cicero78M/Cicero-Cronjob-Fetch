@@ -3,6 +3,7 @@
 // =======================
 import qrcode from "qrcode-terminal";
 import dotenv from "dotenv";
+import { writeFileSync } from "fs";
 import { env } from "../config/env.js";
 
 // WhatsApp client using Baileys
@@ -74,16 +75,33 @@ export async function waitForGatewayReady(timeout = 30000) {
   }
 
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ready) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      waGatewayClient.off('ready', onReady);
+      waGatewayClient.off('auth_failure', onUnavailable);
+      waGatewayClient.off('disconnected', onUnavailable);
+      resolve(ready);
+    };
+    const onReady = () => {
+      isGatewayReady = true;
+      finish(true);
+    };
+    const onUnavailable = () => finish(false);
     const timer = setTimeout(() => {
       console.warn('[WA GATEWAY] Timeout waiting for ready state');
-      resolve(false);
+      finish(false);
     }, timeout);
 
-    waGatewayClient.once('ready', () => {
-      clearTimeout(timer);
-      isGatewayReady = true;
-      resolve(true);
-    });
+    waGatewayClient.once('ready', onReady);
+    waGatewayClient.once('auth_failure', onUnavailable);
+    waGatewayClient.once('disconnected', onUnavailable);
+
+    // Avoid missing a ready event that fires between the initial check and
+    // listener registration.
+    if (isGatewayReady) finish(true);
   });
 }
 
@@ -98,6 +116,12 @@ if (waGatewayClient && shouldInitWhatsAppClients) {
   waGatewayClient.on('qr', (qr) => {
     console.log('[WA GATEWAY] QR Code received. Scan with WhatsApp:');
     qrcode.generate(qr, { small: true });
+    try {
+      writeFileSync('/tmp/wa_gateway_prod_qr.txt', qr);
+      console.log('[WA GATEWAY] Raw QR string written to /tmp/wa_gateway_prod_qr.txt');
+    } catch (err) {
+      console.error('[WA GATEWAY] Failed to write raw QR:', err?.message || err);
+    }
   });
 
   waGatewayClient.on('authenticated', () => {
@@ -105,6 +129,7 @@ if (waGatewayClient && shouldInitWhatsAppClients) {
   });
 
   waGatewayClient.on('auth_failure', (msg) => {
+    isGatewayReady = false;
     console.error('[WA GATEWAY] Authentication failed:', msg);
   });
 

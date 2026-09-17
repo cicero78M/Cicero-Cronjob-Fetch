@@ -21,15 +21,20 @@ const mockSocket = {
   readMessages: jest.fn().mockResolvedValue(),
   end: jest.fn(),
 };
+const mockMakeWASocket = jest.fn(() => mockSocket);
 
 // Mock Baileys
 const mockUseMultiFileAuthState = jest.fn().mockResolvedValue({
   state: { creds: {}, keys: {} },
   saveCreds: jest.fn(),
 });
+const mockFetchLatestBaileysVersion = jest.fn().mockResolvedValue({
+  version: [2, 2412, 54],
+  isLatest: true,
+});
 
 jest.unstable_mockModule('@whiskeysockets/baileys', () => ({
-  default: jest.fn(() => mockSocket),
+  default: mockMakeWASocket,
   DisconnectReason: {
     badSession: 401,
     connectionClosed: 428,
@@ -40,10 +45,7 @@ jest.unstable_mockModule('@whiskeysockets/baileys', () => ({
     timedOut: 408,
   },
   useMultiFileAuthState: mockUseMultiFileAuthState,
-  fetchLatestBaileysVersion: jest.fn().mockResolvedValue({
-    version: [2, 2412, 54],
-    isLatest: true,
-  }),
+  fetchLatestBaileysVersion: mockFetchLatestBaileysVersion,
   makeCacheableSignalKeyStore: jest.fn().mockReturnValue({}),
   Browsers: {
     ubuntu: jest.fn(() => ['Ubuntu', 'Chrome', '20.0.04']),
@@ -70,6 +72,10 @@ beforeEach(() => {
   jest.clearAllMocks();
   Object.keys(mockSocketEvents).forEach(key => delete mockSocketEvents[key]);
   mockSocket.user = undefined;
+  mockFetchLatestBaileysVersion.mockResolvedValue({
+    version: [2, 2412, 54],
+    isLatest: true,
+  });
   mockPinoConfig = undefined;
   delete process.env.WA_DEBUG_LOGGING;
   delete process.env.WA_AUTH_DATA_PATH;
@@ -83,6 +89,7 @@ afterEach(async () => {
     await client.disconnect();
   }
   activeClients = [];
+  jest.useRealTimers();
 });
 
 test('baileys adapter initializes and connects', async () => {
@@ -112,6 +119,35 @@ test('baileys adapter initializes and connects', async () => {
   }
   
   expect(readyHandler).toHaveBeenCalled();
+});
+
+test('baileys adapter applies bounded connection settings', async () => {
+  const client = await createBaileysClient('test-client');
+  activeClients.push(client);
+
+  await client.connect();
+
+  expect(mockMakeWASocket).toHaveBeenCalledWith(
+    expect.objectContaining({
+      connectTimeoutMs: 30000,
+      defaultQueryTimeoutMs: 60000,
+      keepAliveIntervalMs: 20000,
+      markOnlineOnConnect: false,
+      syncFullHistory: false,
+    })
+  );
+});
+
+test('baileys adapter falls back to bundled version when version lookup fails', async () => {
+  mockFetchLatestBaileysVersion.mockRejectedValueOnce(new Error('version lookup timeout'));
+  const client = await createBaileysClient('test-client');
+  activeClients.push(client);
+
+  await expect(client.connect()).resolves.toBeUndefined();
+
+  expect(mockMakeWASocket).toHaveBeenCalledWith(
+    expect.not.objectContaining({ version: expect.anything() })
+  );
 });
 
 test('baileys adapter relays messages', async () => {
@@ -247,6 +283,68 @@ test('baileys adapter handles disconnection', async () => {
   }
   
   expect(disconnectHandler).toHaveBeenCalledWith('CONNECTION_CLOSED');
+});
+
+test('baileys adapter reconnects transient failures and ignores stale socket events', async () => {
+  jest.useFakeTimers();
+  const client = await createBaileysClient('test-client');
+  activeClients.push(client);
+  await client.connect();
+  const staleCloseHandler = mockSocketEvents['connection.update'][0];
+
+  await staleCloseHandler({
+    connection: 'close',
+    lastDisconnect: { error: { output: { statusCode: 428 } } },
+  });
+  await jest.advanceTimersByTimeAsync(3000);
+  await client.getConnectPromise();
+
+  expect(mockMakeWASocket).toHaveBeenCalledTimes(2);
+
+  await staleCloseHandler({
+    connection: 'close',
+    lastDisconnect: { error: { output: { statusCode: 428 } } },
+  });
+  await jest.advanceTimersByTimeAsync(60000);
+
+  expect(mockMakeWASocket).toHaveBeenCalledTimes(2);
+});
+
+test('baileys adapter does not reconnect after explicit disconnect', async () => {
+  jest.useFakeTimers();
+  const client = await createBaileysClient('test-client');
+  activeClients.push(client);
+  await client.connect();
+  const closeHandler = mockSocketEvents['connection.update'][0];
+
+  await client.disconnect();
+  await closeHandler({
+    connection: 'close',
+    lastDisconnect: { error: { output: { statusCode: 428 } } },
+  });
+  await jest.advanceTimersByTimeAsync(60000);
+
+  expect(mockMakeWASocket).toHaveBeenCalledTimes(1);
+  expect(await client.getState()).toBe('DISCONNECTED');
+});
+
+test('baileys adapter does not fight a replaced connection', async () => {
+  jest.useFakeTimers();
+  const client = await createBaileysClient('test-client');
+  activeClients.push(client);
+  const authFailureHandler = jest.fn();
+  client.on('auth_failure', authFailureHandler);
+  await client.connect();
+
+  await mockSocketEvents['connection.update'][0]({
+    connection: 'close',
+    lastDisconnect: { error: { output: { statusCode: 440 } } },
+  });
+  await jest.advanceTimersByTimeAsync(60000);
+
+  expect(authFailureHandler).toHaveBeenCalledWith('CONNECTION_REPLACED');
+  expect(mockMakeWASocket).toHaveBeenCalledTimes(1);
+  expect(await client.isReady()).toBe(false);
 });
 
 test('baileys adapter can be disconnected', async () => {

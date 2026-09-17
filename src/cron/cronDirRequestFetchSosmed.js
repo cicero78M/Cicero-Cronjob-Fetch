@@ -507,6 +507,9 @@ export async function runCron(options = {}) {
   });
 
   let lockHeldByCurrentRun = false;
+  let lockRenewalTimer = null;
+  let lockRenewalInProgress = false;
+  let leaseLost = false;
 
   try {
     if (isFetchInFlight) {
@@ -516,6 +519,35 @@ export async function runCron(options = {}) {
 
     isFetchInFlight = true;
     lockHeldByCurrentRun = true;
+
+    const lockRenewalIntervalMs = Math.max(1000, Math.floor((LOCK_TTL_SECONDS * 1000) / 3));
+    lockRenewalTimer = setInterval(async () => {
+      if (lockRenewalInProgress || leaseLost) return;
+      lockRenewalInProgress = true;
+      try {
+        const extended = typeof distributedLock.extend === 'function'
+          ? await distributedLock.extend()
+          : true;
+        if (!extended) {
+          leaseLost = true;
+          logMessage("lock", null, "lock_extend", "lost", null, null,
+            "Distributed lock ownership was lost; queued client work will be skipped.", {
+              metric: "lock_lost",
+              lockKey: DISTRIBUTED_LOCK_KEY,
+            });
+        }
+      } catch (extendError) {
+        leaseLost = true;
+        logMessage("lock", null, "lock_extend", "error", null, null,
+          extendError?.message || String(extendError), {
+            metric: "lock_extend_error",
+            lockKey: DISTRIBUTED_LOCK_KEY,
+          });
+      } finally {
+        lockRenewalInProgress = false;
+      }
+    }, lockRenewalIntervalMs);
+    lockRenewalTimer.unref?.();
 
     // Determine if we should fetch posts based on time
     const timeBasedMessage = forceEngagementOnly
@@ -565,6 +597,7 @@ export async function runCron(options = {}) {
     const clientTasks = [];
     let processedCount = 0;
     let skippedDueToDeadline = 0;
+    let skippedDueToLeaseLoss = 0;
 
     for (const client of scopedClients) {
       const elapsedMs = Date.now() - runStartedAt;
@@ -576,6 +609,16 @@ export async function runCron(options = {}) {
       }
 
       clientTasks.push(limit(async () => {
+        const remainingAtStartMs = maxRunDurationMs - (Date.now() - runStartedAt);
+        if (leaseLost) {
+          skippedDueToLeaseLoss += 1;
+          return null;
+        }
+        if (remainingAtStartMs <= DEADLINE_INTAKE_BUFFER_MS) {
+          skippedDueToDeadline += 1;
+          return null;
+        }
+
         try {
           const result = await processClient(client, {
             forceEngagementOnly,
@@ -598,6 +641,10 @@ export async function runCron(options = {}) {
 
     await Promise.all(clientTasks);
 
+    if (leaseLost) {
+      throw new Error('Distributed lock lease was lost before the cron run completed');
+    }
+
     if (skippedDueToDeadline > 0) {
       logMessage("deadline", null, "client_intake", "limited", null, null,
         `Stopped client intake due to deadline. Remaining clients will be processed in next run.`, {
@@ -607,7 +654,7 @@ export async function runCron(options = {}) {
         });
     }
 
-    const completionMessage = `✅ ${LOG_TAG} completed. processed_count=${processedCount}, skipped_due_to_deadline=${skippedDueToDeadline}, total_clients=${scopedClients.length}.`;
+    const completionMessage = `✅ ${LOG_TAG} completed. processed_count=${processedCount}, skipped_due_to_deadline=${skippedDueToDeadline}, skipped_due_to_lease_loss=${skippedDueToLeaseLoss}, total_clients=${scopedClients.length}.`;
     logMessage("end", null, "cron", "completed", null, null, completionMessage);
     await sendTelegramLog("INFO", completionMessage);
 
@@ -626,16 +673,27 @@ export async function runCron(options = {}) {
       { name: err?.name, stack: err?.stack?.slice(0, 200) });
     await sendTelegramError(LOG_TAG, err);
   } finally {
+    if (lockRenewalTimer) {
+      clearInterval(lockRenewalTimer);
+    }
     const runDurationMs = Date.now() - runStartedAt;
     logMessage("metric", null, "run_duration", "completed", null, null, `Cron duration ${runDurationMs}ms`, {
       metric: "run_duration",
       durationMs: runDurationMs,
     });
-    await distributedLock.release();
-    logMessage("lock", null, "lock_released", "released", null, null, "Distributed lock released", {
-      metric: "lock_released",
-      lockKey: DISTRIBUTED_LOCK_KEY,
-    });
+    try {
+      await distributedLock.release();
+      logMessage("lock", null, "lock_released", "released", null, null, "Distributed lock released", {
+        metric: "lock_released",
+        lockKey: DISTRIBUTED_LOCK_KEY,
+      });
+    } catch (releaseError) {
+      logMessage("lock", null, "lock_release", "error", null, null,
+        releaseError?.message || String(releaseError), {
+          metric: "lock_release_error",
+          lockKey: DISTRIBUTED_LOCK_KEY,
+        });
+    }
 
     if (lockHeldByCurrentRun) {
       isFetchInFlight = false;

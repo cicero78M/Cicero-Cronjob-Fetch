@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { withAxiosTimeout } from '../utils/httpTimeout.js';
 import * as clientModel from '../model/clientModel.js';
 import * as userModel from '../model/userModel.js';
 import * as instaPostService from './instaPostService.js';
@@ -34,13 +35,13 @@ export const deleteClient = async (client_id) => await clientModel.remove(client
 export async function fetchTiktokSecUid(username) {
   if (!username) return null;
   try {
-    const res = await axios.get(`https://${RAPIDAPI_HOST}/api/user/info`, {
+    const res = await axios.get(`https://${RAPIDAPI_HOST}/api/user/info`, withAxiosTimeout({
       params: { uniqueId: username.replace(/^@/, "") },
       headers: {
         "x-rapidapi-key": RAPIDAPI_KEY,
         "x-rapidapi-host": RAPIDAPI_HOST,
       },
-    });
+    }));
     return res.data?.userInfo?.user?.secUid || null;
   } catch {
     return null;

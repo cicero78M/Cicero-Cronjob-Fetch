@@ -18,7 +18,7 @@ const LOG_CLIENT_ID = 'wa-log-admin';
 
 // Get admin WhatsApp numbers from environment
 const ADMIN_WHATSAPP = process.env.ADMIN_WHATSAPP || '';
-const LOG_ENABLED = Boolean(ADMIN_WHATSAPP);
+const LOG_ENABLED = Boolean(ADMIN_WHATSAPP) && process.env.WA_LOG_CLIENT_ENABLED !== 'false';
 
 let waLogClient = null;
 let isLogClientReady = false;
@@ -63,6 +63,7 @@ async function initializeWhatsAppLogClient() {
     });
 
     waLogClient.on('auth_failure', (msg) => {
+      isLogClientReady = false;
       console.error('[WA LOG] Authentication failed:', msg);
     });
 
@@ -103,26 +104,38 @@ async function waitForLogClientReady(timeout = 30000) {
   }
 
   return new Promise((resolve) => {
+    let settled = false;
+    const client = waLogClient;
+    const finish = (ready) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      client?.off('ready', onReady);
+      client?.off('auth_failure', onUnavailable);
+      client?.off('disconnected', onUnavailable);
+      resolve(ready);
+    };
+    const onReady = () => {
+      isLogClientReady = true;
+      finish(true);
+    };
+    const onUnavailable = () => finish(false);
     const timer = setTimeout(() => {
       console.warn('[WA LOG] Timeout waiting for ready state');
-      resolve(false);
+      finish(false);
     }, timeout);
 
-    if (waLogClient) {
-      waLogClient.once('ready', () => {
-        clearTimeout(timer);
-        isLogClientReady = true;
-        resolve(true);
-      });
+    if (client) {
+      client.once('ready', onReady);
+      client.once('auth_failure', onUnavailable);
+      client.once('disconnected', onUnavailable);
       
       // Check again after listener is registered to avoid race condition
       if (isLogClientReady) {
-        clearTimeout(timer);
-        resolve(true);
+        finish(true);
       }
     } else {
-      clearTimeout(timer);
-      resolve(false);
+      finish(false);
     }
   });
 }

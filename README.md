@@ -136,9 +136,11 @@ Setiap perubahan fungsi/module **wajib** mengaudit dan memperbarui dokumentasi t
 
 ### PM2 Deploy Checklist (Baileys Session Ownership)
 
+- [ ] Jalankan definisi ESM-safe dengan `ecosystem.config.cjs`; konfigurasi default memulai Fetch dalam mode standby tanpa scheduler/outbox WhatsApp.
 - [ ] Jangan jalankan lebih dari satu process untuk `clientId` yang sama.
 - [ ] Jangan share auth path antar service tanpa ownership yang jelas (`WA_AUTH_DATA_PATH` + `clientId` harus punya owner tunggal).
 - [ ] Opsional fail-fast: set `WA_BAILEYS_STRICT_SINGLE_OWNER=true` agar process exit saat lock conflict `WA_BAILEYS_SHARED_SESSION_LOCK`.
+- [ ] Gunakan timeout Baileys terbatasi dan reconnect eksponensial; default aman tersedia melalui `WA_BAILEYS_CONNECT_TIMEOUT_MS`, `WA_BAILEYS_QUERY_TIMEOUT_MS`, `WA_BAILEYS_KEEPALIVE_INTERVAL_MS`, `WA_BAILEYS_RECONNECT_BASE_DELAY_MS`, dan `WA_BAILEYS_RECONNECT_MAX_DELAY_MS`.
 
 ## Database Schema
 

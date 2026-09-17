@@ -25,7 +25,7 @@ function logError(message, error) {
 function getStatusLookupStrategy() {
   const configuredStrategy =
     process.env.CRON_STATUS_LOOKUP_STRATEGY?.trim().toLowerCase() ||
-    CRON_STATUS_LOOKUP_STRATEGY.FAIL_OPEN;
+    CRON_STATUS_LOOKUP_STRATEGY.FAIL_CLOSED;
 
   if (configuredStrategy === CRON_STATUS_LOOKUP_STRATEGY.FAIL_CLOSED) {
     return CRON_STATUS_LOOKUP_STRATEGY.FAIL_CLOSED;

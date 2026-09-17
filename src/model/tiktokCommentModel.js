@@ -512,7 +512,16 @@ export async function getRekapKomentarByClient(
       u.user_id,
       u.title,
       u.nama,
-      u.tiktok AS username,
+      COALESCE((
+        SELECT usa.username
+        FROM user_social_accounts usa
+        WHERE usa.user_id = u.user_id
+          AND LOWER(usa.platform) = 'tiktok'
+          AND usa.is_active = TRUE
+          AND trim(coalesce(usa.username, '')) <> ''
+        ORDER BY usa.account_order ASC, usa.created_at ASC
+        LIMIT 1
+      ), u.tiktok) AS username,
       u.divisi,
       cl.nama AS client_name,
       cl.regional_id,
@@ -522,6 +531,14 @@ export async function getRekapKomentarByClient(
     JOIN clients cl ON cl.client_id = u.client_id
     LEFT JOIN comment_counts cc
       ON lower(replace(trim(coalesce(u.tiktok, '')), '@', '')) = cc.username
+      OR EXISTS (
+        SELECT 1
+        FROM user_social_accounts usa
+        WHERE usa.user_id = u.user_id
+          AND LOWER(usa.platform) = 'tiktok'
+          AND usa.is_active = TRUE
+          AND lower(replace(trim(coalesce(usa.username, '')), '@', '')) = cc.username
+      )
     CROSS JOIN total_posts tp
     WHERE u.status = true
       AND ${userWhere}

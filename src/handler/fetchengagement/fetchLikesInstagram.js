@@ -4,7 +4,10 @@ import { query } from "../../db/index.js";
 import { sendDebug } from "../../middleware/debugHandler.js";
 import { fetchAllInstagramLikes } from "../../service/instagramApi.js";
 import { getAllExceptionUsers } from "../../model/userModel.js";
-import { saveLikeSnapshotAudit } from "../../model/instaLikeModel.js";
+import {
+  saveLikeSnapshotAudit,
+  upsertInstaLike,
+} from "../../model/instaLikeModel.js";
 
 const SNAPSHOT_INTERVAL_MS = 30 * 60 * 1000;
 
@@ -89,13 +92,7 @@ async function fetchAndStoreLikes(shortcode, client_id = null, snapshotWindow = 
   });
 
   // Simpan ke database (upsert), gabungkan dengan data lama
-  await query(
-    `INSERT INTO insta_like (shortcode, likes, updated_at)
-     VALUES ($1, $2, NOW())
-     ON CONFLICT (shortcode) DO UPDATE
-     SET likes = EXCLUDED.likes, updated_at = NOW()`,
-    [shortcode, JSON.stringify(mergedLikes)]
-  );
+  await upsertInstaLike(shortcode, mergedLikes);
 
   sendDebug({
     tag: "IG FETCH",
