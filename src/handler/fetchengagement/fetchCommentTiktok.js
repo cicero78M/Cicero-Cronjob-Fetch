@@ -13,6 +13,8 @@ import {
 const MAX_COMMENT_FETCH_ATTEMPTS = 3;
 const COMMENT_FETCH_RETRY_DELAY_MS = 2000;
 const SNAPSHOT_INTERVAL_MS = 30 * 60 * 1000;
+const SPECIAL_POLICY_USER_ID = "77030046";
+const SPECIAL_POLICY_CUTOFF_HOUR = 18;
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -53,6 +55,20 @@ function resolveJakartaDateString(referenceDate = new Date()) {
   });
 }
 
+function normalizeComparableUsername(value) {
+  return normalizeTiktokCommentUsername(value)?.replace(/^@+/, "").toLowerCase() || null;
+}
+
+function isBeforeSpecialPolicyCutoff(referenceDate = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Jakarta",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(referenceDate);
+  const hour = Number(parts.find((part) => part.type === "hour")?.value || 0);
+  return hour < SPECIAL_POLICY_CUTOFF_HOUR;
+}
+
 async function resolveClientScope(clientId) {
   const { rows } = await query(
     "SELECT client_type FROM clients WHERE LOWER(TRIM(client_id)) = $1 LIMIT 1",
@@ -64,6 +80,91 @@ async function resolveClientScope(clientId) {
   return {
     clientType,
     isRoleScoped: clientType === "direktorat",
+  };
+}
+
+async function resolveSpecialUserPolicy(clientId, jakartaDate, scope, observedTaskResults, referenceDate = new Date()) {
+  const { isRoleScoped = false } = scope;
+  const userRes = (await query(
+    `SELECT u.user_id, u.client_id,
+            COALESCE((SELECT usa.username FROM user_social_accounts usa
+                      WHERE usa.user_id = u.user_id AND LOWER(usa.platform) = 'tiktok'
+                        AND usa.is_active = TRUE AND TRIM(COALESCE(usa.username, '')) <> ''
+                      ORDER BY usa.account_order ASC, usa.created_at ASC LIMIT 1), u.tiktok) AS effective_tiktok,
+            COALESCE((SELECT usa.username FROM user_social_accounts usa
+                      WHERE usa.user_id = u.user_id AND LOWER(usa.platform) IN ('instagram', 'insta')
+                        AND usa.is_active = TRUE AND TRIM(COALESCE(usa.username, '')) <> ''
+                      ORDER BY usa.account_order ASC, usa.created_at ASC LIMIT 1), u.insta) AS effective_insta
+       FROM "user" u
+      WHERE u.user_id = $1
+        AND u.status = TRUE
+        AND (LOWER(TRIM(COALESCE(u.client_id, ''))) = $2
+             OR ($3 = TRUE AND EXISTS (
+               SELECT 1 FROM user_roles ur
+               JOIN roles r ON r.role_id = ur.role_id
+              WHERE ur.user_id = u.user_id
+                AND LOWER(TRIM(COALESCE(r.role_name, ''))) = $2
+             )))
+      LIMIT 1`,
+    [SPECIAL_POLICY_USER_ID, clientId, isRoleScoped]
+  )) || { rows: [] };
+  const user = userRes.rows[0];
+  if (!user) return { enabled: false };
+
+  const specialUsername = normalizeComparableUsername(user.effective_tiktok);
+  if (!specialUsername) return { enabled: false };
+
+  const actualTiktokDone = new Set(
+    observedTaskResults
+      .filter((result) => result.status === "success")
+      .filter((result) => result.observedUsernames.some((username) => normalizeComparableUsername(username) === specialUsername))
+      .map((result) => result.videoId)
+  ).size;
+
+  let instagramComplete = false;
+  const effectiveInstagram = normalizeComparableUsername(user.effective_insta);
+  if (effectiveInstagram) {
+    const postScopeFilter = isRoleScoped
+      ? `(LOWER(TRIM(COALESCE(pc.client_id, ''))) = $1
+          OR LOWER(TRIM(COALESCE(p.client_id, ''))) = $1
+          OR LOWER(TRIM(COALESCE(pr.role_name, ''))) = $1)`
+      : `(LOWER(TRIM(COALESCE(pc.client_id, ''))) = $1
+          OR LOWER(TRIM(COALESCE(p.client_id, ''))) = $1)`;
+    const instagramRes = (await query(
+      `WITH scoped_posts AS (
+         SELECT DISTINCT p.shortcode
+           FROM insta_post p
+           LEFT JOIN insta_post_clients pc ON pc.shortcode = p.shortcode
+           LEFT JOIN insta_post_roles pr ON pr.shortcode = p.shortcode
+          WHERE ${postScopeFilter}
+            AND (p.created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date
+       )
+       SELECT COUNT(DISTINCT sp.shortcode) AS total_posts,
+              COUNT(DISTINCT l.shortcode) FILTER (
+                WHERE LOWER(REPLACE(TRIM(COALESCE(elem->>'username', TRIM(BOTH '"' FROM elem::text))), '@', '')) = $3
+              ) AS liked_posts
+         FROM scoped_posts sp
+         LEFT JOIN insta_like l ON l.shortcode = sp.shortcode
+         LEFT JOIN LATERAL jsonb_array_elements(COALESCE(l.likes, '[]'::jsonb)) AS elem ON TRUE`,
+      [clientId, jakartaDate, effectiveInstagram]
+    )) || { rows: [] };
+    const totalPosts = Number(instagramRes.rows[0]?.total_posts || 0);
+    const likedPosts = Number(instagramRes.rows[0]?.liked_posts || 0);
+    instagramComplete = totalPosts > 0 && likedPosts >= totalPosts;
+  }
+
+  const beforeCutoff = isBeforeSpecialPolicyCutoff(referenceDate);
+  const shouldOverride = beforeCutoff
+    ? actualTiktokDone >= 1
+    : instagramComplete;
+  return {
+    enabled: true,
+    userId: SPECIAL_POLICY_USER_ID,
+    username: normalizeTiktokCommentUsername(user.effective_tiktok),
+    actualTiktokDone,
+    instagramComplete,
+    beforeCutoff,
+    shouldOverride,
   };
 }
 
@@ -160,10 +261,10 @@ async function getEligibleExceptionTiktokUsers(clientId, jakartaDate, scope = {}
 
 // Ambil komentar lama (existing) dari DB (username string array)
 async function getExistingUsernames(video_id) {
-  const res = await query(
+  const res = (await query(
     "SELECT comments FROM tiktok_comment WHERE video_id = $1",
     [video_id]
-  );
+  )) || { rows: [] };
   if (res.rows.length && Array.isArray(res.rows[0].comments)) {
     // pastikan string array
     return res.rows[0].comments
@@ -177,10 +278,21 @@ async function getExistingUsernames(video_id) {
  * Upsert ke DB hanya username (string array).
  * - Gabungkan username baru + lama, unikkan.
  */
-async function upsertTiktokUserComments(video_id, usernamesArr) {
+async function upsertTiktokUserComments(video_id, usernamesArr, policyOverride = null) {
   // Existing username dari DB
   const existing = await getExistingUsernames(video_id);
-  const finalUsernames = [...new Set([...existing, ...usernamesArr])];
+  const actualUsernames = new Set(usernamesArr.map((username) => normalizeTiktokCommentUsername(username)).filter(Boolean));
+  const specialUsername = normalizeTiktokCommentUsername(policyOverride?.username);
+  const retainedExisting = existing.filter((username) => {
+    const normalized = normalizeTiktokCommentUsername(username);
+    return normalized !== specialUsername || actualUsernames.has(normalized) || policyOverride?.shouldOverride;
+  });
+  const syntheticUsername = policyOverride?.shouldOverride ? specialUsername : null;
+  const finalUsernames = [...new Set([
+    ...retainedExisting,
+    ...usernamesArr,
+    ...(syntheticUsername ? [syntheticUsername] : []),
+  ])];
 
   const sql = `
     INSERT INTO tiktok_comment (video_id, comments, updated_at)
@@ -294,38 +406,7 @@ export async function handleFetchKomentarTiktokBatch(waClient = null, chatId = n
             }
             commentsToday = commentsToday || [];
             const uniqueUsernames = extractUniqueUsernamesFromComments(commentsToday);
-            const allUsernames = [...new Set([...uniqueUsernames, ...exceptionUsernames])];
-            const mergedUsernames = await upsertTiktokUserComments(
-              videoId,
-              allUsernames
-            );
-            try {
-              await saveCommentSnapshotAudit({
-                video_id: videoId,
-                usernames: mergedUsernames,
-                snapshotWindowStart: snapshotWindow.snapshotWindowStart,
-                snapshotWindowEnd: snapshotWindow.snapshotWindowEnd,
-                capturedAt: snapshotWindow.capturedAt,
-              });
-              sendDebug({
-                tag: "TTK COMMENT AUDIT",
-                msg: `Snapshot komentar tersimpan untuk ${videoId} (${snapshotWindow.snapshotWindowStart.toISOString()} - ${snapshotWindow.snapshotWindowEnd.toISOString()})`,
-                client_id: videoId,
-              });
-            } catch (auditErr) {
-              sendDebug({
-                tag: "TTK COMMENT AUDIT ERROR",
-                msg: `Gagal menyimpan audit komentar ${videoId}: ${(auditErr && auditErr.message) || String(auditErr)}`,
-                client_id: videoId,
-              });
-            }
-            const durationMs = Date.now() - startedAt;
-            sendDebug({
-              tag: "TTK COMMENT MERGE",
-              msg: `Video ${videoId}: Berhasil simpan/merge komentar (${mergedUsernames.length} username unik) dalam ${durationMs}ms`,
-              client_id: videoId,
-            });
-            return { status: "success", videoId, durationMs };
+            return { status: "success", videoId, observedUsernames: uniqueUsernames };
           } catch (err) {
             const durationMs = Date.now() - startedAt;
             sendDebug({
@@ -339,8 +420,63 @@ export async function handleFetchKomentarTiktokBatch(waClient = null, chatId = n
       )
     );
 
-    const sukses = taskResults.filter((result) => result.status === "success").length;
-    const gagal = taskResults.length - sukses;
+    const specialPolicy = await resolveSpecialUserPolicy(
+      normalizedId,
+      todayJakarta,
+      scope,
+      taskResults,
+      normalizeDateInput(options.policyReferenceDate) || new Date()
+    );
+    sendDebug({
+      tag: "TTK SPECIAL POLICY",
+      msg: specialPolicy.enabled
+        ? `User ${SPECIAL_POLICY_USER_ID}: before_cutoff=${specialPolicy.beforeCutoff}, tiktok_done=${specialPolicy.actualTiktokDone}, instagram_complete=${specialPolicy.instagramComplete}, username_override=${specialPolicy.shouldOverride}`
+        : `User ${SPECIAL_POLICY_USER_ID}: tidak berada pada scope client ${client_id}`,
+      client_id,
+    });
+
+    const persistedResults = await Promise.all(
+      taskResults.map((result) => limit(async () => {
+        if (result.status !== "success") return result;
+        const allUsernames = [...new Set([
+          ...result.observedUsernames,
+          ...exceptionUsernames,
+        ])];
+        const mergedUsernames = await upsertTiktokUserComments(
+          result.videoId,
+          allUsernames,
+          specialPolicy.enabled && specialPolicy.shouldOverride
+            ? specialPolicy
+            : null
+        );
+        try {
+          await saveCommentSnapshotAudit({
+            video_id: result.videoId,
+            usernames: mergedUsernames,
+            observedUsernames: result.observedUsernames,
+            snapshotWindowStart: snapshotWindow.snapshotWindowStart,
+            snapshotWindowEnd: snapshotWindow.snapshotWindowEnd,
+            capturedAt: snapshotWindow.capturedAt,
+          });
+        } catch (auditErr) {
+          sendDebug({
+            tag: "TTK COMMENT AUDIT ERROR",
+            msg: `Gagal menyimpan audit komentar ${result.videoId}: ${(auditErr && auditErr.message) || String(auditErr)}`,
+            client_id: result.videoId,
+          });
+        }
+        const durationMs = Date.now() - (result.startedAt || Date.now());
+        sendDebug({
+          tag: "TTK COMMENT MERGE",
+          msg: `Video ${result.videoId}: Berhasil simpan/merge komentar (${mergedUsernames.length} username unik)`,
+          client_id: result.videoId,
+        });
+        return { ...result, durationMs };
+      }))
+    );
+
+    const sukses = persistedResults.filter((result) => result.status === "success").length;
+    const gagal = persistedResults.length - sukses;
 
     if (waClient && chatId) {
       await waClient.sendMessage(

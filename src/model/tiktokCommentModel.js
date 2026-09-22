@@ -163,6 +163,7 @@ export const findByVideoId = getCommentsByVideoId;
 export async function saveCommentSnapshotAudit({
   video_id,
   usernames = [],
+  observedUsernames = [],
   snapshotWindowStart,
   snapshotWindowEnd,
   capturedAt = new Date(),
@@ -177,9 +178,18 @@ export async function saveCommentSnapshotAudit({
     ? usernames.filter(Boolean)
     : [];
   const result = await query(
-    `INSERT INTO tiktok_comment_audit (video_id, usernames, snapshot_window_start, snapshot_window_end, captured_at)
-     VALUES ($1, $2, $3::timestamptz, $4::timestamptz, $5::timestamptz)`,
-    [video_id, JSON.stringify(normalizedUsernames), startParam, endParam, capturedParam]
+    `INSERT INTO tiktok_comment_audit
+      (video_id, usernames, observed_usernames,
+       snapshot_window_start, snapshot_window_end, captured_at)
+     VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz, $6::timestamptz)`,
+    [
+      video_id,
+      JSON.stringify(normalizedUsernames),
+      JSON.stringify(Array.isArray(observedUsernames) ? observedUsernames.filter(Boolean) : []),
+      startParam,
+      endParam,
+      capturedParam,
+    ]
   );
   return result.rowCount || 0;
 }
