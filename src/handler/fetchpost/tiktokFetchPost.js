@@ -201,7 +201,7 @@ async function deleteVideoIds(videoIdsToDelete, clientId = null) {
     timeZone: "Asia/Jakarta",
   });
   let sql =
-    "DELETE FROM tiktok_post WHERE video_id = ANY($1) AND (created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date";
+    "DELETE FROM tiktok_post WHERE video_id = ANY($1) AND (created_at AT TIME ZONE 'Asia/Jakarta')::date = $2::date AND COALESCE(source_type, 'cron_fetch') <> 'manual_input'";
   const params = [videoIdsToDelete, todayJakarta];
   if (clientId) {
     sql += ` AND LOWER(TRIM(client_id)) = $3`;

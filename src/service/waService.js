@@ -1,7 +1,6 @@
 // =======================
 // IMPORTS & KONFIGURASI
 // =======================
-import qrcode from "qrcode-terminal";
 import dotenv from "dotenv";
 import { writeFileSync } from "fs";
 import { env } from "../config/env.js";
@@ -114,13 +113,21 @@ if (waGatewayClient && shouldInitWhatsAppClients) {
   });
 
   waGatewayClient.on('qr', (qr) => {
-    console.log('[WA GATEWAY] QR Code received. Scan with WhatsApp:');
-    qrcode.generate(qr, { small: true });
+    console.log('[WA GATEWAY] QR Code received; use the local raw QR file or pairing-code mode.');
     try {
-      writeFileSync('/tmp/wa_gateway_prod_qr.txt', qr);
+      writeFileSync('/tmp/wa_gateway_prod_qr.txt', qr, { mode: 0o600 });
       console.log('[WA GATEWAY] Raw QR string written to /tmp/wa_gateway_prod_qr.txt');
     } catch (err) {
       console.error('[WA GATEWAY] Failed to write raw QR:', err?.message || err);
+    }
+  });
+
+  waGatewayClient.on('pairing_code', (pairingCode) => {
+    try {
+      writeFileSync('/tmp/wa_gateway_prod_pairing_code.txt', pairingCode, { mode: 0o600 });
+      console.log('[WA GATEWAY] Pairing code written to /tmp/wa_gateway_prod_pairing_code.txt');
+    } catch (err) {
+      console.error('[WA GATEWAY] Failed to write pairing code:', err?.message || err);
     }
   });
 

@@ -204,9 +204,30 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   const MAX_ERRORS_DURING_COOLDOWN = 5; // Force recovery if too many errors during cooldown
   const COOLDOWN_LOG_INTERVAL = 5000; // Emit max one cooldown log per source every 5 seconds
   const MAC_ERROR_DEDUP_WINDOW = 1500; // Avoid double-counting same Bad MAC signal from multiple event paths
+  const DECRYPT_LOG_INTERVAL = readBoundedPositiveInt(
+    'WA_BAILEYS_DECRYPT_LOG_INTERVAL_MS',
+    60000,
+    { min: 5000, max: 300000 }
+  );
+  const maxSessionRepairAttempts = readBoundedPositiveInt(
+    'WA_BAILEYS_MAX_SESSION_REPAIR_ATTEMPTS',
+    3,
+    { min: 1, max: 10 }
+  );
+  const sessionRepairWindowMs = readBoundedPositiveInt(
+    'WA_BAILEYS_SESSION_REPAIR_WINDOW_MS',
+    3600000,
+    { min: 60000, max: 86400000 }
+  );
+  const pairingPhoneNumber = String(process.env.WA_BAILEYS_PAIRING_PHONE || '')
+    .replace(/\D/g, '');
   let lastMacErrorSignature = null;
   let lastMacErrorSignatureTime = 0;
+  let sessionRepairWindowStartedAt = 0;
+  let sessionRepairAttempts = 0;
+  let authRepairRequired = false;
   const cooldownLogState = new Map();
+  const decryptLogState = { lastLogAt: 0, suppressedCount: 0 };
 
   const BAD_MAC_CATEGORY_PATTERNS = [
     {
@@ -278,6 +299,25 @@ export async function createBaileysClient(clientId = 'wa-admin') {
     for (const [source, state] of cooldownLogState.entries()) {
       emitSuppressedCooldownSummary(source, state);
     }
+  };
+
+  const logDecryptErrorThrottled = (message) => {
+    const now = Date.now();
+    if (now - decryptLogState.lastLogAt < DECRYPT_LOG_INTERVAL) {
+      decryptLogState.suppressedCount += 1;
+      return;
+    }
+
+    if (decryptLogState.suppressedCount > 0) {
+      console.warn(
+        `[BAILEYS] Suppressed ${decryptLogState.suppressedCount} duplicate decrypt logs ` +
+          `during the last ${Math.round(DECRYPT_LOG_INTERVAL / 1000)}s`
+      );
+      decryptLogState.suppressedCount = 0;
+    }
+
+    decryptLogState.lastLogAt = now;
+    console.error('[BAILEYS-LOGGER] Bad MAC error detected:', message);
   };
 
   const cooldownSummaryInterval = setInterval(flushCooldownSuppressionSummary, COOLDOWN_LOG_INTERVAL);
@@ -390,6 +430,39 @@ export async function createBaileysClient(clientId = 'wa-admin') {
     }
 
     await removeSessionLock();
+  };
+
+  const markAuthRepairRequired = async (reason) => {
+    if (authRepairRequired) return;
+    authRepairRequired = true;
+    stopped = true;
+    connectionState = 'AUTH_REPAIR_REQUIRED';
+    emitter.fatalInitError = {
+      code: 'WA_AUTH_REPAIR_REQUIRED',
+      message: 'WhatsApp Signal session requires manual re-pairing',
+      reason,
+      timestamp: Date.now(),
+    };
+    console.error(
+      `[BAILEYS][FATAL] AUTH_REPAIR_REQUIRED for clientId=${clientId}: ${reason}. ` +
+        'Automatic reconnect stopped; backup the auth directory and pair again.'
+    );
+    if (reconnectTimeout) {
+      clearTimeout(reconnectTimeout);
+      reconnectTimeout = null;
+    }
+    if (sock) {
+      const socketToClose = sock;
+      sock = null;
+      socketGeneration += 1;
+      try {
+        socketToClose.end();
+      } catch (err) {
+        console.warn('[BAILEYS] Error closing socket after auth repair request:', err?.message || err);
+      }
+    }
+    await releaseSessionLock();
+    emitter.emit('auth_failure', 'AUTH_REPAIR_REQUIRED');
   };
 
   /**
@@ -510,6 +583,23 @@ export async function createBaileysClient(clientId = 'wa-admin') {
                          isForcedRecovery;
     
     if (shouldRecover && !reinitInProgress) {
+      if (
+        sessionRepairWindowStartedAt === 0 ||
+        now - sessionRepairWindowStartedAt > sessionRepairWindowMs
+      ) {
+        sessionRepairWindowStartedAt = now;
+        sessionRepairAttempts = 0;
+      }
+      sessionRepairAttempts += 1;
+
+      if (sessionRepairAttempts > maxSessionRepairAttempts) {
+        void markAuthRepairRequired(
+          `${sessionRepairAttempts} decrypt recovery attempts within ` +
+            `${Math.round(sessionRepairWindowMs / 60000)} minutes`
+        );
+        return;
+      }
+
       let reason;
       if (isForcedRecovery) {
         reason = `${errorsDuringCooldown} Bad MAC errors during cooldown - forced recovery`;
@@ -528,7 +618,13 @@ export async function createBaileysClient(clientId = 'wa-admin') {
       lastRecoveryAttemptTime = now;
       errorsDuringCooldown = 0; // Reset cooldown counter since we're attempting recovery
       
-      // Schedule reinitialization asynchronously to avoid blocking
+      // Schedule reinitialization asynchronously to avoid blocking.
+      // A Bad MAC indicates a Signal-session/key-sync problem, not proof that
+      // the WhatsApp login is invalid. Clearing the whole auth directory here
+      // invalidates the linked device and causes a reconnect/login storm,
+      // making the outbox fail while the socket is not ready. Keep auth state
+      // for automatic recovery; explicit reinitialize({ clearAuthSession:
+      // true }) remains available for a real logout/manual re-pair.
       // For burst errors and forced recovery, use immediate execution; for others, use setImmediate
       const executeRecovery = async () => {
         if (!reinitInProgress) {
@@ -536,7 +632,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             await reinitializeClient(
               'bad-mac-error-decryption',
               reason,
-              { clearAuthSessionOverride: true }
+              { clearAuthSessionOverride: false }
             );
             consecutiveMacErrors = 0;
             lastMacErrorTime = 0;
@@ -617,7 +713,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             setImmediate(() => handleBadMacError(combinedErrorText, 'logger'));
             console.warn(`[BAILEYS-LOGGER] Matched pattern "${matchedPattern}", forwarding to Bad MAC handler`);
             // Always log Bad MAC errors to console for visibility
-            console.error('[BAILEYS-LOGGER] Bad MAC error detected:', combinedErrorText);
+            logDecryptErrorThrottled(combinedErrorText);
             // Don't let Pino log it again
             return undefined;
           }
@@ -925,6 +1021,19 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             }
           }
         });
+
+        if (!state.creds.registered && pairingPhoneNumber) {
+          setTimeout(async () => {
+            if (stopped || currentGeneration !== socketGeneration || sock !== currentSocket) return;
+            try {
+              const pairingCode = await currentSocket.requestPairingCode(pairingPhoneNumber);
+              emitter.emit('pairing_code', pairingCode);
+              console.log('[BAILEYS] Pairing code generated and emitted to the local operator channel.');
+            } catch (err) {
+              console.error('[BAILEYS] Pairing code request failed:', err?.message || err);
+            }
+          }, 1500).unref?.();
+        }
 
         console.log(`[BAILEYS] Client initialized for clientId=${clientId}`);
         

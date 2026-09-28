@@ -51,13 +51,14 @@ export async function findPostByVideoId(video_id) {
  * @param {string} video_id
  * @returns {Promise<number>}
  */
-export async function deletePostByVideoId(video_id) {
+export async function deletePostByVideoId(video_id, { allowManual = false } = {}) {
   const normalizedVideoId = (video_id || "").trim();
   if (!normalizedVideoId) {
     return 0;
   }
+  const manualClause = allowManual ? "" : " AND COALESCE(source_type, 'cron_fetch') <> 'manual_input'";
   const res = await query(
-    `DELETE FROM tiktok_post WHERE video_id = $1`,
+    `DELETE FROM tiktok_post WHERE video_id = $1${manualClause}`,
     [normalizedVideoId]
   );
   return res.rowCount || 0;
@@ -79,8 +80,14 @@ export async function upsertTiktokPosts(client_id, posts) {
              caption = EXCLUDED.caption,
              like_count = EXCLUDED.like_count,
              comment_count = EXCLUDED.comment_count,
-             created_at = EXCLUDED.created_at,
-             original_created_at = EXCLUDED.original_created_at,
+             created_at = CASE
+               WHEN tiktok_post.source_type = 'manual_input' THEN tiktok_post.created_at
+               ELSE EXCLUDED.created_at
+             END,
+             original_created_at = CASE
+               WHEN tiktok_post.source_type = 'manual_input' THEN tiktok_post.original_created_at
+               ELSE COALESCE(tiktok_post.original_created_at, EXCLUDED.original_created_at)
+             END,
              source_type = CASE
                WHEN tiktok_post.source_type = 'manual_input' THEN tiktok_post.source_type
                ELSE EXCLUDED.source_type
@@ -137,8 +144,14 @@ export async function upsertTiktokPostWithStatus({
            caption = EXCLUDED.caption,
            like_count = EXCLUDED.like_count,
            comment_count = EXCLUDED.comment_count,
-           created_at = EXCLUDED.created_at,
-           original_created_at = EXCLUDED.original_created_at,
+           created_at = CASE
+             WHEN tiktok_post.source_type = 'manual_input' THEN tiktok_post.created_at
+             ELSE EXCLUDED.created_at
+           END,
+           original_created_at = CASE
+             WHEN tiktok_post.source_type = 'manual_input' THEN tiktok_post.original_created_at
+             ELSE EXCLUDED.original_created_at
+           END,
            source_type = CASE
              WHEN tiktok_post.source_type = 'manual_input' THEN tiktok_post.source_type
              ELSE EXCLUDED.source_type
