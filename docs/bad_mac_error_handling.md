@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Baileys WhatsApp adapter now includes automatic recovery for "Bad MAC" (Message Authentication Code) errors that occur during message decryption.
+The Baileys WhatsApp adapter detects message-level Signal session mismatches while keeping the authenticated socket online. Baileys can then use its native retry/pre-key flow to request fresh peer keys without interrupting healthy outbound traffic.
 
 ## Problem
 
@@ -48,19 +48,21 @@ The adapter monitors for "Bad MAC" patterns in **three locations** (prioritized 
 
 All Bad MAC signals are now routed to one handler (`handleBadMacError`) including connection-level failures.
 To prevent false escalation, the adapter deduplicates identical Bad MAC signals that arrive within a short window
-(e.g. logger + connection update for the same failure burst). This avoids double-counting while keeping the existing
-recovery flow (`reinitializeClient(..., { clearAuthSessionOverride: true })`) unchanged.
+(e.g. logger + connection update for the same failure burst). This avoids double-counting. By default the handler
+keeps the socket online and delegates peer-key recovery to Baileys native retry. It never clears the full auth
+directory for a message-level decrypt error.
 
 ### Recovery Process
 
-1. **First Error**: Log the error and increment counter (1/2)
-2. **Second Error**: 
-   - If within 5 seconds of first error: Trigger immediate recovery (rapid error detection)
-   - Otherwise: Trigger recovery at threshold
-   - Log warning about too many consecutive errors
-   - Clear the corrupted session data
-   - Reinitialize the WhatsApp connection with fresh keys
-   - Reset the error counter
+1. Detect and classify the message-level decrypt/session mismatch.
+2. Collapse verbose `libsignal` stacks into one timestamped summary per configured interval.
+3. Extract the exact Signal session id from the libsignal stack, copy that one key into `.session-quarantine`, and remove only the corrupt peer key.
+4. Keep the authenticated socket online so Baileys can send its native retry request and establish fresh peer keys.
+5. Continue to handle real connection close/logout events through the connection lifecycle.
+
+Automatic socket reinitialization for message-level decrypt errors is disabled by default because it interrupts a healthy outbox and does not repair a peer-specific ratchet. It can be enabled temporarily by an operator with `WA_BAILEYS_AUTO_RECOVER_DECRYPT_ERRORS=true`.
+
+Targeted peer-session repair is enabled by default and can be disabled for diagnosis with `WA_BAILEYS_TARGETED_SESSION_REPAIR=false`. It does not remove `creds.json`, signed keys, pre-keys, or other peer sessions.
 
 ### Counter Reset
 
@@ -93,17 +95,14 @@ const MAX_CONSECUTIVE_MAC_ERRORS = 2;
 
 Additionally, the system detects **rapid errors** (errors occurring within 5 seconds) and can trigger recovery even after just 1 error if it's part of a rapid sequence, as this indicates serious session corruption.
 
-This threshold balances between:
+This threshold is used for detection and operator-controlled fallback. The default production behavior keeps native retry enabled without reconnecting the socket. This balances between:
 - **Too low (1)**: May trigger unnecessary session resets from single transient issues
 - **Too high (3+)**: Takes longer to recover from genuine session corruption
 - **Current (2 with rapid detection)**: Fast recovery while avoiding false positives
 
 ### Session Clear
 
-When recovery is triggered, the adapter automatically clears the session by:
-- Removing the `~/.cicero/baileys_auth/{clientId}` directory
-- Creating a fresh authentication directory
-- Reconnecting and re-authenticating with WhatsApp
+Message-level decrypt errors never clear the full authenticated session automatically. Full session removal is reserved for an explicit logout or a controlled manual re-pair after a recoverable backup has been created.
 
 ### Contoh `.env` production (benar)
 
@@ -129,11 +128,8 @@ LOG_CLIENT_ID=wa-log-cicero-v2-prod
 Jika menemukan salah satu/lebih string berikut, anggap ada indikasi kuat session corruption atau session collision:
 
 ```text
-Session error:Error: Bad MAC Error: Bad MAC
-[BAILEYS] Bad MAC error detected in decryption layer (1/2): Failed to decrypt message with any known session
-[BAILEYS] Bad MAC error detected in decryption layer (2/2) [RAPID]: Bad MAC Error: Bad MAC
-[BAILEYS] Too many Bad MAC errors detected, scheduling reinitialization (reason: Rapid Bad MAC errors in decryption (0s between errors))
-[BAILEYS] Reinitializing clientId=wa-gateway after bad-mac-error (2 consecutive MAC failures) (clear session).
+[BAILEYS][SIGNAL] Incoming message session is out of sync; Baileys native retry will request fresh keys.
+[BAILEYS] Decrypt/session mismatch detected; keeping the socket online so Baileys can request fresh peer keys through its native retry flow.
 ```
 
 **Detection at Logger Level (NEW - Primary):**
@@ -154,18 +150,9 @@ Session error:Error: Bad MAC Error: Bad MAC
 [BAILEYS] Error processing message: Bad MAC Error: Bad MAC from 6281234567890@s.whatsapp.net
 ```
 
-**Recovery Triggered:**
+**Operator-controlled reconnect fallback:**
 ```
-[BAILEYS] Bad MAC error detected (2/2): Bad MAC Error: Bad MAC
-[BAILEYS] Too many Bad MAC errors, reinitializing with session clear (reason: 2 consecutive MAC failures)
-[BAILEYS] Reinitializing clientId=wa-gateway after bad-mac-error (2 consecutive MAC failures) (clear session).
-[BAILEYS] Cleared auth session for clientId=wa-gateway at /path/to/session.
-```
-
-Or for rapid errors:
-```
-[BAILEYS] Bad MAC error detected (1/2) [RAPID]: Bad MAC Error: Bad MAC
-[BAILEYS] Too many Bad MAC errors, reinitializing with session clear (reason: Rapid Bad MAC errors (0s between errors))
+WA_BAILEYS_AUTO_RECOVER_DECRYPT_ERRORS=true
 ```
 
 **Successful Recovery:**

@@ -22,10 +22,14 @@ const mockSocket = {
   end: jest.fn(),
 };
 const mockMakeWASocket = jest.fn(() => mockSocket);
+const mockAuthKeys = {
+  get: jest.fn().mockResolvedValue({}),
+  set: jest.fn().mockResolvedValue(),
+};
 
 // Mock Baileys
 const mockUseMultiFileAuthState = jest.fn().mockResolvedValue({
-  state: { creds: {}, keys: {} },
+  state: { creds: {}, keys: mockAuthKeys },
   saveCreds: jest.fn(),
 });
 const mockFetchLatestBaileysVersion = jest.fn().mockResolvedValue({
@@ -36,7 +40,7 @@ const mockFetchLatestBaileysVersion = jest.fn().mockResolvedValue({
 jest.unstable_mockModule('@whiskeysockets/baileys', () => ({
   default: mockMakeWASocket,
   DisconnectReason: {
-    badSession: 401,
+    badSession: 500,
     connectionClosed: 428,
     connectionLost: 408,
     connectionReplaced: 440,
@@ -46,7 +50,7 @@ jest.unstable_mockModule('@whiskeysockets/baileys', () => ({
   },
   useMultiFileAuthState: mockUseMultiFileAuthState,
   fetchLatestBaileysVersion: mockFetchLatestBaileysVersion,
-  makeCacheableSignalKeyStore: jest.fn().mockReturnValue({}),
+  makeCacheableSignalKeyStore: jest.fn((store) => store),
   Browsers: {
     ubuntu: jest.fn(() => ['Ubuntu', 'Chrome', '20.0.04']),
   },
@@ -66,7 +70,9 @@ jest.unstable_mockModule('pino', () => ({
   }),
 }));
 
-const { createBaileysClient } = await import('../src/service/baileysAdapter.js');
+const { createBaileysClient, extractSignalSessionIds } = await import(
+  '../src/service/baileysAdapter.js'
+);
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -79,6 +85,8 @@ beforeEach(() => {
   mockPinoConfig = undefined;
   delete process.env.WA_DEBUG_LOGGING;
   delete process.env.WA_AUTH_DATA_PATH;
+  delete process.env.WA_BAILEYS_AUTO_RECOVER_DECRYPT_ERRORS;
+  delete process.env.WA_BAILEYS_TARGETED_SESSION_REPAIR;
 });
 
 let activeClients = [];
@@ -388,7 +396,67 @@ test('baileys adapter gets client state', async () => {
   expect(state).toBe('CONNECTED');
 });
 
-test('baileys adapter handles Bad MAC errors', async () => {
+test('extracts unique Signal session ids from libsignal stacks', () => {
+  const stack = [
+    'at async 6281234567890.0 [as awaitable] (/app/session_cipher.js:171:28)',
+    'at async 6281234567890.0 [as awaitable] (/app/session_cipher.js:171:28)',
+    'at async 6281234567890.30 [as awaitable] (/app/session_cipher.js:171:28)',
+  ].join('\n');
+
+  expect(extractSignalSessionIds(stack)).toEqual([
+    '6281234567890.0',
+    '6281234567890.30',
+  ]);
+});
+
+test('quarantines only the corrupt peer Signal session key', async () => {
+  const authRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'baileys-repair-test-'));
+  process.env.WA_AUTH_DATA_PATH = authRoot;
+  const client = await createBaileysClient('test-client');
+  activeClients.push(client);
+  await client.connect();
+
+  const sessionPath = path.join(authRoot, 'test-client');
+  await fs.promises.writeFile(
+    path.join(sessionPath, 'session-6281234567890.0.json'),
+    '{"test":true}',
+    { mode: 0o600 }
+  );
+
+  const signalError = new Error('No matching sessions found for message');
+  signalError.stack =
+    'SessionError: No matching sessions found for message\n' +
+    '    at async 6281234567890.0 [as awaitable] (/app/session_cipher.js:171:28)';
+
+  mockPinoConfig.hooks.logMethod(
+    [
+      {
+        key: { remoteJid: '6281234567890@lid' },
+        err: signalError,
+      },
+      'failed to decrypt message',
+    ],
+    jest.fn(),
+    50
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  expect(mockAuthKeys.set).toHaveBeenCalledWith({
+    session: { '6281234567890.0': null },
+  });
+  const quarantineFiles = await fs.promises.readdir(
+    path.join(sessionPath, '.session-quarantine')
+  );
+  expect(quarantineFiles.some((file) => file.endsWith('session-6281234567890.0.json'))).toBe(
+    true
+  );
+
+  await fs.promises.rm(authRoot, { recursive: true, force: true });
+});
+
+test('baileys adapter keeps the socket online for message decrypt errors by default', async () => {
+  jest.useFakeTimers();
   const client = await createBaileysClient('test-client');
   activeClients.push(client);
   await client.connect();
@@ -418,6 +486,8 @@ test('baileys adapter handles Bad MAC errors', async () => {
     expect.stringContaining('[BAILEYS] Bad MAC error detected in connection (1/2)'),
     expect.stringContaining('Bad MAC')
   );
+
+  await jest.advanceTimersByTimeAsync(1600);
   
   // Simulate second Bad MAC error
   if (mockSocketEvents['connection.update']) {
@@ -435,14 +505,17 @@ test('baileys adapter handles Bad MAC errors', async () => {
     );
   }
   
-  // Second MAC error should trigger recovery
+  // The second MAC error reaches the detection threshold, but message-level
+  // decrypt failures must use Baileys native retry instead of restarting a
+  // healthy authenticated socket.
   expect(consoleErrorSpy).toHaveBeenCalledWith(
     expect.stringContaining('[BAILEYS] Bad MAC error detected in connection (2/2)'),
     expect.stringContaining('Bad MAC')
   );
   expect(consoleWarnSpy).toHaveBeenCalledWith(
-    expect.stringContaining('[BAILEYS] Too many Bad MAC errors'),
+    expect.stringContaining('Baileys can request fresh peer keys through its native retry flow'),
   );
+  expect(mockMakeWASocket).toHaveBeenCalledTimes(1);
   
   // Cleanup
   consoleErrorSpy.mockRestore();
@@ -565,6 +638,27 @@ test('baileys adapter reinitializes with cleared session on LOGGED_OUT', async (
   consoleWarnSpy.mockRestore();
 });
 
+test('baileys adapter reinitializes in place on BAD_SESSION without clearing auth', async () => {
+  jest.useFakeTimers();
+  const client = await createBaileysClient('test-client');
+  activeClients.push(client);
+  await client.connect();
+
+  const closeHandler = mockSocketEvents['connection.update'][0];
+  const closePromise = closeHandler({
+    connection: 'close',
+    lastDisconnect: {
+      error: { output: { statusCode: 500 } },
+    },
+  });
+
+  await jest.advanceTimersByTimeAsync(2000);
+  await closePromise;
+
+  expect(mockMakeWASocket).toHaveBeenCalledTimes(2);
+  expect(mockUseMultiFileAuthState).toHaveBeenCalledTimes(2);
+});
+
 test('baileys logger handles bad mac pattern from second logger argument', async () => {
   const client = await createBaileysClient('test-client');
   activeClients.push(client);
@@ -585,8 +679,8 @@ test('baileys logger handles bad mac pattern from second logger argument', async
 
   await new Promise((resolve) => setImmediate(resolve));
 
-  expect(consoleWarnSpy).toHaveBeenCalledWith(
-    expect.stringContaining('[BAILEYS-LOGGER] Matched pattern "failed to decrypt message with any known session"')
+  expect(consoleWarnSpy).not.toHaveBeenCalledWith(
+    expect.stringContaining('[BAILEYS-LOGGER] Matched pattern')
   );
   expect(consoleErrorSpy).toHaveBeenCalledWith(
     expect.stringContaining('[BAILEYS-LOGGER] Bad MAC error detected:'),

@@ -80,6 +80,19 @@ function shouldStrictSingleOwner() {
   return process.env.WA_BAILEYS_STRICT_SINGLE_OWNER === 'true';
 }
 
+function shouldAutoRecoverDecryptErrors() {
+  return process.env.WA_BAILEYS_AUTO_RECOVER_DECRYPT_ERRORS === 'true';
+}
+
+function shouldRepairTargetedSignalSessions() {
+  return process.env.WA_BAILEYS_TARGETED_SESSION_REPAIR !== 'false';
+}
+
+export function extractSignalSessionIds(errorText) {
+  const matches = String(errorText || '').matchAll(/\b(\d+\.\d+)\s+\[as awaitable\]/gi);
+  return [...new Set(Array.from(matches, (match) => match[1]))];
+}
+
 function isProcessRunning(pid) {
   if (!pid || pid === process.pid) {
     return false;
@@ -132,6 +145,8 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   const sessionLockPath = path.join(sessionPath, SESSION_LOCK_FILE_NAME);
   const clearAuthSession = shouldClearAuthSession();
   const strictSingleOwner = shouldStrictSingleOwner();
+  const autoRecoverDecryptErrors = shouldAutoRecoverDecryptErrors();
+  const targetedSignalSessionRepair = shouldRepairTargetedSignalSessions();
 
   // Create auth directory if it doesn't exist
   // Ensure the full path is created recursively and verify it's writable
@@ -163,6 +178,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   let connectionState = 'DISCONNECTED';
   let stopped = false;
   let socketGeneration = 0;
+  let authKeyStore = null;
   const connectTimeoutMs = readBoundedPositiveInt(
     'WA_BAILEYS_CONNECT_TIMEOUT_MS',
     30000
@@ -226,6 +242,9 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   let sessionRepairWindowStartedAt = 0;
   let sessionRepairAttempts = 0;
   let authRepairRequired = false;
+  let lastNativeRetryNoticeAt = 0;
+  const repairedSignalSessions = new Set();
+  const repairingSignalSessions = new Set();
   const cooldownLogState = new Map();
   const decryptLogState = { lastLogAt: 0, suppressedCount: 0 };
 
@@ -234,6 +253,16 @@ export async function createBaileysClient(clientId = 'wa-admin') {
       category: 'bad-mac-decrypt',
       patterns: ['failed to decrypt message with any known session'],
       canonicalText: 'failed to decrypt message with any known session',
+    },
+    {
+      category: 'signal-session-mismatch',
+      patterns: ['no matching sessions found for message'],
+      canonicalText: 'Signal session mismatch',
+    },
+    {
+      category: 'signal-future-counter',
+      patterns: ['over 2000 messages into the future'],
+      canonicalText: 'Signal session counter is too far ahead',
     },
     {
       category: 'bad-mac-session-error',
@@ -318,6 +347,56 @@ export async function createBaileysClient(clientId = 'wa-admin') {
 
     decryptLogState.lastLogAt = now;
     console.error('[BAILEYS-LOGGER] Bad MAC error detected:', message);
+  };
+
+  const quarantineAndDeleteSignalSessions = async (sessionIds, reason) => {
+    if (!targetedSignalSessionRepair || !authKeyStore || sessionIds.length === 0) {
+      return false;
+    }
+
+    const validSessionIds = sessionIds.filter(
+      (sessionId) =>
+        /^\d+\.\d+$/.test(sessionId) &&
+        !repairedSignalSessions.has(sessionId) &&
+        !repairingSignalSessions.has(sessionId)
+    );
+    if (validSessionIds.length === 0) {
+      return false;
+    }
+    validSessionIds.forEach((sessionId) => repairingSignalSessions.add(sessionId));
+
+    try {
+      const quarantinePath = path.join(sessionPath, '.session-quarantine');
+      await fs.promises.mkdir(quarantinePath, { recursive: true, mode: 0o700 });
+
+      for (const sessionId of validSessionIds) {
+        const sessionFileName = `session-${sessionId}.json`;
+        const sourcePath = path.join(sessionPath, sessionFileName);
+        const backupPath = path.join(quarantinePath, `${Date.now()}-${sessionFileName}`);
+
+        try {
+          await fs.promises.copyFile(sourcePath, backupPath);
+          await fs.promises.chmod(backupPath, 0o600);
+        } catch (error) {
+          if (error?.code !== 'ENOENT') {
+            throw error;
+          }
+        }
+      }
+
+      await authKeyStore.set({
+        session: Object.fromEntries(validSessionIds.map((sessionId) => [sessionId, null])),
+      });
+      validSessionIds.forEach((sessionId) => repairedSignalSessions.add(sessionId));
+
+      console.warn(
+        `[BAILEYS] Quarantined and removed ${validSessionIds.length} peer Signal session key(s) ` +
+          `after ${reason}; the authenticated device session remains intact.`
+      );
+      return true;
+    } finally {
+      validSessionIds.forEach((sessionId) => repairingSignalSessions.delete(sessionId));
+    }
   };
 
   const cooldownSummaryInterval = setInterval(flushCooldownSuppressionSummary, COOLDOWN_LOG_INTERVAL);
@@ -471,12 +550,32 @@ export async function createBaileysClient(clientId = 'wa-admin') {
    * @param {string} source - Source of the error ('logger' or 'message')
    * @param {string} [senderJid] - JID of the sender (for message-level errors)
    */
-  const handleBadMacError = (errorMsg, source = 'logger', senderJid = null) => {
+  const handleBadMacError = (
+    errorMsg,
+    source = 'logger',
+    senderJid = null,
+    signalSessionIds = []
+  ) => {
     const now = Date.now();
     const normalizedError = normalizeBadMacErrorText(errorMsg);
     const { errorCategory, errorCoreText } = extractBadMacCategory(normalizedError);
     const senderKey = senderJid || '';
-    const errorSignature = `${senderKey}|${errorCategory}|${normalizedError}`;
+    const errorSignature = `${senderKey}|${errorCategory}|${signalSessionIds.join(',')}`;
+
+    if (
+      targetedSignalSessionRepair &&
+      signalSessionIds.length > 0 &&
+      ['bad-mac-decrypt', 'signal-session-mismatch', 'signal-future-counter'].includes(
+        errorCategory
+      )
+    ) {
+      void quarantineAndDeleteSignalSessions(signalSessionIds, errorCategory).catch((error) => {
+        console.error(
+          '[BAILEYS] Targeted Signal session repair failed:',
+          error?.message || error
+        );
+      });
+    }
 
     if (
       lastMacErrorSignature &&
@@ -581,6 +680,21 @@ export async function createBaileysClient(clientId = 'wa-admin') {
                          (isRapidError && consecutiveMacErrors >= 1) ||
                          isBurstError ||
                          isForcedRecovery;
+
+    if (shouldRecover && !autoRecoverDecryptErrors) {
+      if (now - lastNativeRetryNoticeAt >= DECRYPT_LOG_INTERVAL) {
+        console.warn(
+          '[BAILEYS] Decrypt/session mismatch detected; keeping the socket online so ' +
+            'Baileys can request fresh peer keys through its native retry flow. ' +
+            'Set WA_BAILEYS_AUTO_RECOVER_DECRYPT_ERRORS=true only for an operator-controlled fallback.'
+        );
+        lastNativeRetryNoticeAt = now;
+      }
+      consecutiveMacErrors = 0;
+      errorsDuringCooldown = 0;
+      lastMacErrorTime = 0;
+      return;
+    }
     
     if (shouldRecover && !reinitInProgress) {
       if (
@@ -666,6 +780,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
         // Intercept error-level logs to detect Bad MAC errors
         if (level >= 50) { // 50 = error level in Pino
           const stringCandidates = [];
+          let senderJid = null;
 
           for (const arg of inputArgs) {
             if (!arg) continue;
@@ -685,9 +800,11 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             }
 
             if (typeof arg === 'object') {
+              senderJid ||= arg.key?.remoteJid || arg.msg?.key?.remoteJid || null;
               if (arg.msg) stringCandidates.push(arg.msg);
               if (arg.message) stringCandidates.push(arg.message);
               if (arg.err?.message) stringCandidates.push(arg.err.message);
+              if (arg.err?.stack) stringCandidates.push(arg.err.stack);
 
               try {
                 stringCandidates.push(JSON.stringify(arg));
@@ -701,8 +818,11 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             .map((candidate) => String(candidate).trim().toLowerCase())
             .filter(Boolean);
           const combinedErrorText = normalizedCandidates.join(' | ');
+          const signalSessionIds = extractSignalSessionIds(combinedErrorText);
           const badMacPatterns = [
             'failed to decrypt message with any known session',
+            'no matching sessions found for message',
+            'over 2000 messages into the future',
             'session error',
             'bad mac',
           ];
@@ -710,8 +830,12 @@ export async function createBaileysClient(clientId = 'wa-admin') {
 
           if (matchedPattern) {
             // Handle Bad MAC error asynchronously (single trigger per log event)
-            setImmediate(() => handleBadMacError(combinedErrorText, 'logger'));
-            console.warn(`[BAILEYS-LOGGER] Matched pattern "${matchedPattern}", forwarding to Bad MAC handler`);
+            setImmediate(() =>
+              handleBadMacError(combinedErrorText, 'logger', senderJid, signalSessionIds)
+            );
+            if (debugLoggingEnabled) {
+              console.warn(`[BAILEYS-LOGGER] Matched pattern "${matchedPattern}", forwarding to Bad MAC handler`);
+            }
             // Always log Bad MAC errors to console for visibility
             logDecryptErrorThrottled(combinedErrorText);
             // Don't let Pino log it again
@@ -817,13 +941,15 @@ export async function createBaileysClient(clientId = 'wa-admin') {
 
         // Create socket
         const currentGeneration = ++socketGeneration;
+        const cachedSignalKeyStore = makeCacheableSignalKeyStore(state.keys, logger);
+        authKeyStore = cachedSignalKeyStore;
         const currentSocket = makeWASocket({
           ...versionConfig,
           logger,
           printQRInTerminal: false,
           auth: {
             creds: state.creds,
-            keys: makeCacheableSignalKeyStore(state.keys, logger),
+            keys: cachedSignalKeyStore,
           },
           browser: Browsers.ubuntu('Chrome'),
           generateHighQualityLinkPreview: true,
