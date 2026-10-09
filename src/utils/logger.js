@@ -1,5 +1,6 @@
 import { formatJakartaIsoTimestamp } from './jakartaDateTime.js';
 const originalLog = console.log.bind(console);
+const originalInfo = console.info.bind(console);
 const originalWarn = console.warn.bind(console);
 const originalError = console.error.bind(console);
 
@@ -21,9 +22,24 @@ export function isLibsignalDecryptNoise(args = []) {
   const firstArgument = String(args[0] || '');
   return (
     firstArgument.startsWith('Failed to decrypt message with any known session') ||
+    firstArgument.startsWith('Session error:Error: Bad MAC') ||
+    firstArgument.startsWith('Session error:MessageCounterError:') ||
     firstArgument.startsWith(
       'Session error:SessionError: Over 2000 messages into the future!'
     )
+  );
+}
+
+function isClosedSessionWarning(args = []) {
+  const firstArgument = String(args[0] || '').trim();
+  return firstArgument === 'Decrypted message with closed session.';
+}
+
+function isLibsignalSessionLifecycleLog(args = []) {
+  const firstArgument = String(args[0] || '').trim();
+  return (
+    firstArgument.startsWith('Closing session:') ||
+    firstArgument.startsWith('Removing old closed session:')
   );
 }
 
@@ -49,7 +65,21 @@ console.log = (...args) => {
   originalLog(`[${getTimestamp()}]`, ...args);
 };
 
+console.info = (...args) => {
+  // libsignal may include SessionEntry internals in these lifecycle logs.
+  // They are diagnostic noise and must not be persisted in PM2 logs.
+  if (isLibsignalSessionLifecycleLog(args)) {
+    return;
+  }
+  originalInfo(`[${getTimestamp()}]`, ...args);
+};
+
 console.warn = (...args) => {
+  // libsignal emits this for a late message targeting a rotated/closed
+  // session. It is non-fatal and does not require reconnect or re-pairing.
+  if (isClosedSessionWarning(args)) {
+    return;
+  }
   originalWarn(`[${getTimestamp()}]`, ...args);
 };
 

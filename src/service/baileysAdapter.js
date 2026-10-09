@@ -84,6 +84,13 @@ function shouldAutoRecoverDecryptErrors() {
   return process.env.WA_BAILEYS_AUTO_RECOVER_DECRYPT_ERRORS === 'true';
 }
 
+function shouldAutoClearAuthOnLogout() {
+  // Keep auth evidence intact unless an operator explicitly opts into a
+  // controlled re-pair window. Automatic clearing can create a re-pair loop
+  // when another linked device uses the same WhatsApp account.
+  return process.env.WA_BAILEYS_AUTO_CLEAR_AUTH_ON_LOGOUT === 'true';
+}
+
 function shouldRepairTargetedSignalSessions() {
   return process.env.WA_BAILEYS_TARGETED_SESSION_REPAIR !== 'false';
 }
@@ -146,6 +153,7 @@ export async function createBaileysClient(clientId = 'wa-admin') {
   const clearAuthSession = shouldClearAuthSession();
   const strictSingleOwner = shouldStrictSingleOwner();
   const autoRecoverDecryptErrors = shouldAutoRecoverDecryptErrors();
+  const autoClearAuthOnLogout = shouldAutoClearAuthOnLogout();
   const targetedSignalSessionRepair = shouldRepairTargetedSignalSessions();
 
   // Create auth directory if it doesn't exist
@@ -1022,13 +1030,20 @@ export async function createBaileysClient(clientId = 'wa-admin') {
             const reason = getDisconnectReason(statusCode);
             emitter.emit('disconnected', reason);
 
-            // If logged out, reinitialize with cleared session to show QR code again
+            // Do not silently destroy auth or start an unattended re-pair after
+            // logout. Preserve the evidence and require an operator decision.
             if (isLoggedOut && !reinitInProgress) {
-              console.log('[BAILEYS] Logged out detected, reinitializing with cleared session...');
-              try {
-                await reinitializeClient('logged-out', 'User logged out', { clearAuthSessionOverride: true });
-              } catch (err) {
-                console.error('[BAILEYS] Failed to reinitialize after logout:', err?.message || err);
+              if (autoClearAuthOnLogout) {
+                console.warn('[BAILEYS] Logged out detected; explicit auto-clear policy is enabled.');
+                try {
+                  await reinitializeClient('logged-out', 'User logged out', { clearAuthSessionOverride: true });
+                } catch (err) {
+                  console.error('[BAILEYS] Failed to reinitialize after logout:', err?.message || err);
+                }
+              } else {
+                await markAuthRepairRequired(
+                  'WhatsApp reported LOGGED_OUT; auth preserved and automatic re-pair disabled'
+                );
               }
             } else if (isBadSession && !reinitInProgress) {
               // A single 'badSession' close from Baileys does not always mean the
