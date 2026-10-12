@@ -30,7 +30,7 @@ let logNotConfiguredWarningShown = false;
  */
 function logConfigWarningOnce(context) {
   if (!logNotConfiguredWarningShown) {
-    console.warn(`[WA LOG ${context}] Skipping WhatsApp log send: ADMIN_WHATSAPP not configured`);
+    console.log(`[WA LOG ${context}] Skipping WhatsApp log send: ADMIN_WHATSAPP not configured`);
     logNotConfiguredWarningShown = true;
   }
 }
@@ -40,7 +40,7 @@ function logConfigWarningOnce(context) {
  */
 async function initializeWhatsAppLogClient() {
   if (!LOG_ENABLED) {
-    console.warn('[WA LOG] Log client disabled: ADMIN_WHATSAPP not configured');
+    console.log('[WA LOG] Log client disabled: ADMIN_WHATSAPP not configured');
     return null;
   }
 
@@ -157,7 +157,7 @@ export async function sendTelegramMessage(message, options = {}) {
   }
 
   if (!LOG_ENABLED) {
-    console.warn('[WA LOG] Message not sent: ADMIN_WHATSAPP not configured');
+    console.log('[WA LOG] Message not sent: ADMIN_WHATSAPP not configured');
     return false;
   }
 
