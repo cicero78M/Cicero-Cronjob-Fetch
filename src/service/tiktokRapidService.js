@@ -1,7 +1,11 @@
-import axios from 'axios';
 import { fetchTiktokSecUid } from './clientService.js';
 import { env } from '../config/env.js';
 import { withAxiosTimeout } from '../utils/httpTimeout.js';
+import {
+  getRetryAfterMs,
+  isRateLimitError,
+  rapidApiGet,
+} from './rapidApiGuard.js';
 
 const COMMENT_PAGE_MAX_RETRIES = 3;
 const COMMENT_PAGE_BASE_DELAY_MS = 500;
@@ -32,6 +36,7 @@ function delay(ms) {
 function isRetryableError(err) {
   if (!err) return false;
   if (!err.response) return true;
+  if (err.response?.status === 408 || err.response?.status === 429) return true;
   if (err.response?.status >= 500) return true;
   if (err.code && RETRYABLE_ERROR_CODES.has(err.code)) return true;
   return false;
@@ -105,7 +110,7 @@ function parsePostDetail(resData) {
 }
 
 async function requestRapidApiPosts({ host, key, endpoint, params }) {
-  const res = await axios.get(`https://${host}/${endpoint}`, withAxiosTimeout({
+  const res = await rapidApiGet(host, endpoint, withAxiosTimeout({
     params,
     headers: {
       'X-RapidAPI-Key': key,
@@ -160,7 +165,7 @@ async function fetchPostsWithFallback(primaryFetcher, fallbackFetcher, limit) {
 export async function fetchTiktokProfile(username) {
   if (!username) return null;
   try {
-    const res = await axios.get(`https://${RAPIDAPI_HOST}/api/user/info`, withAxiosTimeout({
+    const res = await rapidApiGet(RAPIDAPI_HOST, 'api/user/info', withAxiosTimeout({
       params: { uniqueId: username.replace(/^@/, '') },
       headers: {
         'X-RapidAPI-Key': RAPIDAPI_KEY,
@@ -194,7 +199,7 @@ export async function fetchTiktokProfile(username) {
 export async function fetchTiktokInfo(username) {
   if (!username) return null;
   try {
-    const res = await axios.get(`https://${RAPIDAPI_HOST}/api/user/info`, withAxiosTimeout({
+    const res = await rapidApiGet(RAPIDAPI_HOST, 'api/user/info', withAxiosTimeout({
       params: { uniqueId: username.replace(/^@/, '') },
       headers: {
         'X-RapidAPI-Key': RAPIDAPI_KEY,
@@ -304,7 +309,7 @@ export async function fetchTiktokCommentsPage(videoId, cursor = 0, count = 50) {
 
   for (let attempt = 1; attempt <= COMMENT_PAGE_MAX_RETRIES; attempt++) {
     try {
-      const res = await axios.get(`https://${RAPIDAPI_HOST}/api/post/comments`, withAxiosTimeout({
+      const res = await rapidApiGet(RAPIDAPI_HOST, 'api/post/comments', withAxiosTimeout({
         params: { videoId, count: String(count), cursor: String(cursor) },
         headers: {
           'X-RapidAPI-Key': RAPIDAPI_KEY,
@@ -328,7 +333,9 @@ export async function fetchTiktokCommentsPage(videoId, cursor = 0, count = 50) {
     } catch (err) {
       const shouldRetry = attempt < COMMENT_PAGE_MAX_RETRIES && isRetryableError(err);
       if (shouldRetry) {
-        const waitMs = COMMENT_PAGE_BASE_DELAY_MS * 2 ** (attempt - 1);
+        const waitMs = isRateLimitError(err)
+          ? getRetryAfterMs(err, COMMENT_PAGE_BASE_DELAY_MS * 2 ** (attempt - 1))
+          : COMMENT_PAGE_BASE_DELAY_MS * 2 ** (attempt - 1);
         await delay(waitMs);
         continue;
       }
@@ -409,7 +416,7 @@ export async function fetchTiktokPostDetail(videoId) {
   }
 
   try {
-    const res = await axios.get(`https://${RAPIDAPI_HOST}/api/post/detail`, withAxiosTimeout({
+    const res = await rapidApiGet(RAPIDAPI_HOST, 'api/post/detail', withAxiosTimeout({
       params: { videoId },
       headers: {
         'X-RapidAPI-Key': RAPIDAPI_KEY,

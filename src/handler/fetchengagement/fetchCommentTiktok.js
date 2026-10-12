@@ -235,21 +235,35 @@ async function getEligibleExceptionTiktokUsers(clientId, jakartaDate, scope = {}
      SELECT
        u.user_id,
        u.nama,
-       u.insta,
-       u.tiktok,
+       COALESCE((SELECT usa.username FROM user_social_accounts usa
+                 WHERE usa.user_id = u.user_id AND LOWER(usa.platform) = 'tiktok'
+                   AND usa.is_active = TRUE AND NULLIF(TRIM(usa.username), '') IS NOT NULL
+                 ORDER BY usa.account_order ASC, usa.created_at ASC LIMIT 1), u.tiktok) AS tiktok,
+       COALESCE((SELECT usa.username FROM user_social_accounts usa
+                 WHERE usa.user_id = u.user_id AND LOWER(usa.platform) IN ('instagram', 'insta')
+                   AND usa.is_active = TRUE AND NULLIF(TRIM(usa.username), '') IS NOT NULL
+                 ORDER BY usa.account_order ASC, usa.created_at ASC LIMIT 1), u.insta) AS insta,
        COALESCE(tps.total_post_ig, 0) AS total_post_ig,
        COALESCE(lc.jumlah_like_user, 0) AS jumlah_like_user,
        CASE
          WHEN COALESCE(u.exception_tiktok, false) <> true THEN 'exception_tiktok=false'
-         WHEN NULLIF(TRIM(COALESCE(u.tiktok, '')), '') IS NULL THEN 'username_tiktok_kosong'
-         WHEN NULLIF(TRIM(COALESCE(u.insta, '')), '') IS NULL THEN 'username_ig_kosong'
+         WHEN NULLIF(TRIM(COALESCE((SELECT usa.username FROM user_social_accounts usa
+           WHERE usa.user_id = u.user_id AND LOWER(usa.platform) = 'tiktok' AND usa.is_active = TRUE
+           ORDER BY usa.account_order ASC, usa.created_at ASC LIMIT 1), u.tiktok)), '') IS NULL THEN 'username_tiktok_kosong'
+         WHEN NULLIF(TRIM(COALESCE((SELECT usa.username FROM user_social_accounts usa
+           WHERE usa.user_id = u.user_id AND LOWER(usa.platform) IN ('instagram', 'insta') AND usa.is_active = TRUE
+           ORDER BY usa.account_order ASC, usa.created_at ASC LIMIT 1), u.insta)), '') IS NULL THEN 'username_ig_kosong'
          WHEN COALESCE(lc.jumlah_like_user, 0) < COALESCE(tps.total_post_ig, 0) THEN 'likes_belum_lengkap'
          ELSE 'eligible'
        END AS eligibility_reason
      FROM "user" u
      CROSS JOIN total_post_scope tps
      LEFT JOIN like_counts lc
-       ON LOWER(REPLACE(TRIM(COALESCE(u.insta, '')), '@', '')) = lc.username_ig
+       ON LOWER(REPLACE(TRIM(COALESCE(
+         (SELECT usa.username FROM user_social_accounts usa
+          WHERE usa.user_id = u.user_id AND LOWER(usa.platform) IN ('instagram', 'insta')
+            AND usa.is_active = TRUE
+          ORDER BY usa.account_order ASC, usa.created_at ASC LIMIT 1), u.insta)), '@', '')) = lc.username_ig
     WHERE ${userScopeFilter}
       AND u.status = true`
     ,
