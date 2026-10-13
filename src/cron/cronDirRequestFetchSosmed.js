@@ -17,6 +17,7 @@ import {
   getSchedulerStateMapByClientIds,
   upsertSchedulerState,
 } from "../model/waNotificationReminderStateModel.js";
+import { recordOperation } from "../service/operationMonitorService.js";
 
 const LOG_TAG = "CRON DIRFETCH SOSMED";
 const DISTRIBUTED_LOCK_KEY = "cron:dirfetch:sosmed";
@@ -655,6 +656,9 @@ export async function runCron(options = {}) {
     }
 
     const completionMessage = `✅ ${LOG_TAG} completed. processed_count=${processedCount}, skipped_due_to_deadline=${skippedDueToDeadline}, skipped_due_to_lease_loss=${skippedDueToLeaseLoss}, total_clients=${scopedClients.length}.`;
+    await recordOperation('FETCH', 'SUCCESS', {
+      metadata: { processedCount, skippedDueToDeadline, skippedDueToLeaseLoss, totalClients: scopedClients.length },
+    });
     logMessage("end", null, "cron", "completed", null, null, completionMessage);
     await sendTelegramLog("INFO", completionMessage);
 
@@ -669,6 +673,7 @@ export async function runCron(options = {}) {
     }
 
   } catch (err) {
+    await recordOperation('FETCH', 'ERROR', { message: err?.message || String(err), metadata: { name: err?.name } });
     logMessage("cron", null, "run", "error", null, null, err?.message || String(err),
       { name: err?.name, stack: err?.stack?.slice(0, 200) });
     await sendTelegramError(LOG_TAG, err);
