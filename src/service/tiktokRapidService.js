@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { fetchTiktokSecUid } from './clientService.js';
 import { env } from '../config/env.js';
 import { withAxiosTimeout } from '../utils/httpTimeout.js';
@@ -9,6 +10,8 @@ import {
 
 const COMMENT_PAGE_MAX_RETRIES = 3;
 const COMMENT_PAGE_BASE_DELAY_MS = 500;
+const REPLY_PAGE_MAX_RETRIES = 3;
+const REPLY_PAGE_BASE_DELAY_MS = 500;
 const RETRYABLE_ERROR_CODES = new Set([
   'ECONNRESET',
   'ETIMEDOUT',
@@ -369,23 +372,40 @@ function parseCommentListPayload(payload) {
 }
 
 async function fetchTiktokCommentRepliesPageWeb(videoId, commentId, cursor = 0, count = 50) {
-  const res = await axios.get(`${TIKTOK_WEB_BASE_URL}${TIKTOK_WEB_COMMENT_REPLY_ENDPOINT}`, withAxiosTimeout({
-    params: {
-      item_id: videoId,
-      comment_id: commentId,
-      cursor: String(cursor),
-      count: String(count),
-    },
-    headers: TIKTOK_WEB_DEFAULT_HEADERS,
-  }));
-  const parsed = parseCommentListPayload(res?.data || {});
-  const nextCursor = parsed.hasMore
-    ? parsed.nextCursor ?? cursor + count
-    : null;
-  return {
-    comments: parsed.comments,
-    next_cursor: nextCursor,
-  };
+  for (let attempt = 1; attempt <= REPLY_PAGE_MAX_RETRIES; attempt++) {
+    try {
+      const res = await axios.get(
+        `${TIKTOK_WEB_BASE_URL}${TIKTOK_WEB_COMMENT_REPLY_ENDPOINT}`,
+        withAxiosTimeout({
+          params: {
+            item_id: videoId,
+            comment_id: commentId,
+            cursor: String(cursor),
+            count: String(count),
+          },
+          headers: TIKTOK_WEB_DEFAULT_HEADERS,
+        })
+      );
+      const parsed = parseCommentListPayload(res?.data || {});
+      const nextCursor = parsed.hasMore
+        ? parsed.nextCursor ?? cursor + count
+        : null;
+      return {
+        comments: parsed.comments,
+        next_cursor: nextCursor,
+      };
+    } catch (err) {
+      const shouldRetry = attempt < REPLY_PAGE_MAX_RETRIES && isRetryableError(err);
+      if (!shouldRetry) throw err;
+
+      const waitMs = isRateLimitError(err)
+        ? getRetryAfterMs(err, REPLY_PAGE_BASE_DELAY_MS * 2 ** (attempt - 1))
+        : REPLY_PAGE_BASE_DELAY_MS * 2 ** (attempt - 1);
+      await delay(waitMs);
+    }
+  }
+
+  return { comments: [], next_cursor: null };
 }
 
 async function fetchAllTiktokCommentRepliesWeb(videoId, commentId, count = 50) {

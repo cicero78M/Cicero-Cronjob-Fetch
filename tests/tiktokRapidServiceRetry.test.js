@@ -10,10 +10,11 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 process.env.RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || 'test-key';
 
 let fetchTiktokCommentsPage;
+let fetchAllTiktokComments;
 let fetchTiktokPosts;
 
 beforeAll(async () => {
-  ({ fetchTiktokCommentsPage, fetchTiktokPosts } = await import(
+  ({ fetchTiktokCommentsPage, fetchAllTiktokComments, fetchTiktokPosts } = await import(
     '../src/service/tiktokRapidService.js'
   ));
 });
@@ -71,4 +72,74 @@ test('fetchTiktokPosts resolves secUid and keeps the primary flow on RapidAPI', 
       })
     })
   );
+});
+
+test('fetchAllTiktokComments fetches replies through the web endpoint', async () => {
+  mockAxiosGet
+    .mockResolvedValueOnce({
+      data: {
+        data: {
+          comments: [
+            {
+              cid: 'comment-1',
+              reply_comment_total: 1,
+              reply_comment: [],
+            },
+          ],
+          total: 1,
+        },
+      },
+    })
+    .mockResolvedValueOnce({
+      data: {
+        comments: [{ cid: 'reply-1', text: 'reply' }],
+        has_more: false,
+      },
+    });
+
+  const result = await fetchAllTiktokComments('video-1');
+
+  expect(result[0].reply_comment).toEqual([
+    { cid: 'reply-1', text: 'reply' },
+  ]);
+  expect(mockAxiosGet).toHaveBeenCalledTimes(2);
+  expect(mockAxiosGet.mock.calls[1][0]).toBe(
+    'https://www.tiktok.com/api/comment/list/reply/'
+  );
+});
+
+test('reply fetch retries transient web errors', async () => {
+  const timeoutError = new Error('timeout');
+  timeoutError.code = 'ETIMEDOUT';
+
+  mockAxiosGet
+    .mockResolvedValueOnce({
+      data: {
+        data: {
+          comments: [
+            {
+              cid: 'comment-1',
+              reply_comment_total: 1,
+              reply_comment: [],
+            },
+          ],
+          total: 1,
+        },
+      },
+    })
+    .mockRejectedValueOnce(timeoutError)
+    .mockResolvedValueOnce({
+      data: {
+        comments: [{ cid: 'reply-1' }],
+        has_more: false,
+      },
+    });
+
+  jest.useFakeTimers();
+  const promise = fetchAllTiktokComments('video-1');
+  await jest.advanceTimersByTimeAsync(1000);
+  const result = await promise;
+
+  expect(result[0].reply_comment).toEqual([{ cid: 'reply-1' }]);
+  expect(mockAxiosGet).toHaveBeenCalledTimes(3);
 });
