@@ -85,7 +85,7 @@ test('executes handler when status lookup keeps failing', async () => {
   });
   mockGetCronJob.mockRejectedValue(new Error('database offline'));
 
-  scheduleCronJob('job1', '* * * * *', handler);
+  scheduleCronJob('job1', '* * * * *', handler, { statusLookupStrategy: 'fail_open' });
   await scheduledHandler();
 
   expect(mockGetCronJob).toHaveBeenCalledTimes(2);

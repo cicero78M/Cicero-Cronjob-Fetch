@@ -22,7 +22,15 @@ function logError(message, error) {
   console.error(`${DEFAULT_LOG_PREFIX} ${message}`, error);
 }
 
-function getStatusLookupStrategy() {
+function getStatusLookupStrategy(override) {
+  if (override === CRON_STATUS_LOOKUP_STRATEGY.FAIL_OPEN) {
+    return CRON_STATUS_LOOKUP_STRATEGY.FAIL_OPEN;
+  }
+
+  if (override === CRON_STATUS_LOOKUP_STRATEGY.FAIL_CLOSED) {
+    return CRON_STATUS_LOOKUP_STRATEGY.FAIL_CLOSED;
+  }
+
   const configuredStrategy =
     process.env.CRON_STATUS_LOOKUP_STRATEGY?.trim().toLowerCase() ||
     CRON_STATUS_LOOKUP_STRATEGY.FAIL_CLOSED;
@@ -73,7 +81,7 @@ export function scheduleCronJob(jobKey, cronExpression, handler, options = {}) {
             );
 
             if (attempt === 2) {
-              const statusLookupStrategy = getStatusLookupStrategy();
+              const statusLookupStrategy = getStatusLookupStrategy(options.statusLookupStrategy);
               if (statusLookupStrategy === CRON_STATUS_LOOKUP_STRATEGY.FAIL_CLOSED) {
                 logError(
                   `ALERT: Skipping job ${jobKey} because status lookup failed and CRON_STATUS_LOOKUP_STRATEGY=fail_closed.`,

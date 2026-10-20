@@ -715,7 +715,13 @@ const UNIFIED_FETCH_SCHEDULES = [
   "0 22 * * *",
 ];
 
-const CRON_OPTIONS = { timezone: "Asia/Jakarta" };
+// A transient DB outage must not silently cancel a scheduled fetch. The fetch
+// handler still validates DB availability and reports a run error if storage
+// is unavailable, while the next scheduled slot remains eligible to execute.
+const CRON_OPTIONS = {
+  timezone: "Asia/Jakarta",
+  statusLookupStrategy: "fail_open",
+};
 
 // Schedule unified fetch jobs (07:00-22:00)
 UNIFIED_FETCH_SCHEDULES.forEach((schedule, index) => {
